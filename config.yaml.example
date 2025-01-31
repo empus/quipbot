@@ -7,6 +7,9 @@ realname: "quip (verb): make a witty remark"
 # Bot ident
 ident: "quip"
 
+# Local IP address to bind to for server connections (optional)
+bindhost: ""  # Example: "192.168.1.100" or leave empty for default
+
 # User mode to set after connecting (e.g. "+ix" for invisible and external immunity)
 usermode: "+ix"
 

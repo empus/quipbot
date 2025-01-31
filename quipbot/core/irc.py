@@ -87,12 +87,23 @@ class IRCBot:
             self.password = server.get('password', '')
             use_tls = server.get('tls', False)
             verify_cert = server.get('verify_cert', True)
+            bindhost = self.config.get('bindhost', '')
             
             try:
                 self.logger.info(f"Connecting to {self.host}:{self.port} {'with' if use_tls else 'without'} TLS")
+                if bindhost:
+                    self.logger.info(f"Using bind host: {bindhost}")
                 
                 # Create base socket
                 base_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                
+                # Bind to specific local address if configured
+                if bindhost:
+                    try:
+                        base_socket.bind((bindhost, 0))
+                    except Exception as e:
+                        self.logger.error(f"Failed to bind to {bindhost}: {e}")
+                        raise
                 
                 if use_tls:
                     # Configure TLS context
