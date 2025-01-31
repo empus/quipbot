@@ -103,9 +103,14 @@ class MessageHandler:
     def handle_join(self, nick, userhost, params):
         """Handle JOIN command."""
         channel = params.lstrip(':')
-        if nick == self.bot.nick:
+        if nick.lower() == self.bot.current_nick.lower():
             self.bot.channel_users[channel] = {}
-            self.logger.info(f"Joined channel: {channel}")
+            # Add ourselves to the channel user list with current nickname
+            self.bot.channel_users[channel][self.bot.current_nick] = {
+                'op': False,
+                'voice': False
+            }
+            self.logger.info(f"Joined channel: {channel} (as {self.bot.current_nick})")
             
             # Initialize timers for this channel
             self.bot.last_chat_times[channel] = time.time()
@@ -117,7 +122,7 @@ class MessageHandler:
                 entrance_prompt = self.bot.config.get('ai_prompt_entrance', 'Generate a channel entrance message')
                 entrance_msg = self.bot.ai_client.get_response(
                     entrance_prompt,
-                    self.bot.nick,
+                    self.bot.current_nick,  # Use current_nick
                     channel=channel,
                     add_to_history=True  # Add to history so we know we were last speaker
                 )

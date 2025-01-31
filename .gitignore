@@ -3,6 +3,7 @@
 
 # Config file
 config.yaml
+config2.yaml
 
 # Log files
 *.log

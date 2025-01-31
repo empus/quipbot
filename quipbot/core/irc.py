@@ -19,6 +19,10 @@ class IRCBot:
         """Initialize IRC bot."""
         self.config = config
         self.nick = config['nick']
+        self.altnick = config.get('altnick', f"{self.nick}_")  # Default to nick_ if not specified
+        self.current_nick = self.nick  # Track current nickname
+        self.nick_attempt = 0  # Track nickname attempt number
+        self.last_nick_recovery = 0  # Track last time we tried to recover primary nick
         self.realname = config['realname']
         self.ident = config['ident']
         self.servers = config['servers']
@@ -52,8 +56,14 @@ class IRCBot:
         self.channel_users = {}  # {channel: {nick: {'op': False, 'voice': False}}}
         
         # Timers for random actions - per channel
-        self.last_chat_times = {}  # {channel: timestamp}
+        self.last_chat_times = {}  # {channel: timestamp} - When any user last spoke
+        self.last_bot_times = {}   # {channel: timestamp} - When the bot last spoke
         self.last_action_times = {}  # {channel: timestamp}
+        self.last_check_times = {}  # {channel: timestamp} - When we last checked for conversation
+        
+        # Conversation continuation tracking
+        self.last_trigger_times = {}  # {channel: timestamp}
+        self.conversation_timers = {}  # {channel: next_response_time}
 
     def _sasl_plain_auth(self):
         """Perform SASL PLAIN authentication."""
@@ -131,7 +141,7 @@ class IRCBot:
                 if self.password:
                     self.send_raw(f"PASS {self.password}")
                     
-                self.send_raw(f"NICK {self.nick}")
+                self.send_raw(f"NICK {self.current_nick}")
                 self.send_raw(f"USER {self.ident} 0 * :{self.realname}")
                 
                 # If not using SASL, end capability negotiation
@@ -181,6 +191,24 @@ class IRCBot:
 
     def handle_numeric(self, numeric, params):
         """Handle numeric responses."""
+        if numeric == "433":  # ERR_NICKNAMEINUSE
+            # If this is during initial connection (not registered yet)
+            if not self.registration_complete:
+                if self.current_nick == self.nick:
+                    # Primary nick is taken, try alternate
+                    self.current_nick = self.altnick
+                    self.logger.info(f"Primary nickname {self.nick} is taken, trying {self.current_nick}")
+                else:
+                    # Alternate nick is also taken, append number
+                    self.nick_attempt += 1
+                    self.current_nick = f"{self.altnick}{self.nick_attempt}"
+                    self.logger.info(f"Alternate nickname is taken, trying {self.current_nick}")
+                self.send_raw(f"NICK {self.current_nick}")
+            else:
+                # This is from a recovery attempt - just keep our current nick
+                self.logger.debug(f"Primary nickname {self.nick} still unavailable, keeping {self.current_nick}")
+            return
+            
         if numeric == "903":  # RPL_SASLSUCCESS
             self.logger.info("SASL authentication successful")
             self.sasl_authenticated = True
@@ -203,7 +231,7 @@ class IRCBot:
             usermode = self.config.get('usermode')
             if usermode:
                 self.logger.debug(f"Setting user mode: {usermode}")
-                self.send_raw(f"MODE {self.nick} {usermode}")
+                self.send_raw(f"MODE {self.current_nick} {usermode}")
             
             # Send post-connect commands
             post_connect_commands = self.config.get('post_connect_commands', [])
@@ -211,7 +239,7 @@ class IRCBot:
                 self.logger.debug("Sending post-connect commands")
                 for cmd in post_connect_commands:
                     # Replace variables in command
-                    cmd = cmd.replace('$nick', self.nick)
+                    cmd = cmd.replace('$nick', self.current_nick)
                     self.logger.debug(f"Sending command: {cmd}")
                     self.send_raw(cmd)
                     time.sleep(1)  # Add delay between commands to prevent flood
@@ -269,6 +297,12 @@ class IRCBot:
             self.send_raw(f"JOIN {channel_name} {channel_key}")
             self.logger.debug(f"Joining channel: {channel_name}")
 
+    def _schedule_next_response(self, channel):
+        """Schedule the next response time for a channel."""
+        continue_freq = self.get_channel_config(channel, 'ai_continue_freq', 30)
+        self.conversation_timers[channel.lower()] = time.time() + continue_freq
+        self.logger.debug(f"Scheduled next response for {channel} in {continue_freq}s")
+
     def send_channel_message(self, channel, message):
         """Send a message to a channel."""
         formatted_message = self.format_message(message)
@@ -306,12 +340,15 @@ class IRCBot:
             try:
                 self.send_raw(f"PRIVMSG {channel} :{chunk}")
                 # Add our own message to the channel history
-                history_entry = f"{self.nick}: {chunk}"
+                history_entry = f"{self.current_nick}: {chunk}"
                 # Use lowercase channel name for consistency
                 channel_lower = channel.lower()
                 self.ai_client.add_to_history(history_entry, channel_lower)
-                # Update last chat time since we spoke
-                self.last_chat_times[channel_lower] = time.time()
+                # Update last bot time since we spoke
+                self.last_bot_times[channel_lower] = time.time()
+                # Schedule next response time
+                if self._should_continue_conversation(channel):
+                    self._schedule_next_response(channel)
             except Exception as e:
                 self.logger.error(f"Failed to send message to {channel}: {e}")
 
@@ -352,18 +389,61 @@ class IRCBot:
         """Handle random actions on timers."""
         while True:
             try:
-                time.sleep(5)
                 now = time.time()
+                next_check = now + 5  # Default to 5 seconds between checks
                 
-                # Check idle chat interval for each channel
+                # Process each channel independently
                 for channel in self.channels:
                     channel_name = channel['name']
+                    channel_lower = channel_name.lower()
+                    
                     # Skip if we're not in the channel
                     if not self.is_in_channel(channel_name):
-                        self.logger.debug(f"Not in channel {channel_name}, skipping")
                         continue
+                    
+                    # Check for active conversation
+                    if self._should_continue_conversation(channel_name):
+                        # Get next scheduled response time
+                        next_response_time = self.conversation_timers.get(channel_lower, 0)
+                        time_until_response = next_response_time - now
                         
-                    # Initialize timers for this channel if not exist
+                        # If it's time for next response and someone else has spoken since our last message
+                        if time_until_response <= 0 and not self.was_last_speaker(channel_name):
+                            self.logger.debug(f"Timer triggered for {channel_name} - generating response")
+                            # Get the most recent message from chat history
+                            channel_history = self.ai_client.chat_history.get(channel_lower, [])
+                            if channel_history:
+                                last_message = channel_history[-1]
+                                self.logger.debug(f"Continuing conversation from: {last_message}")
+                                
+                                response = self.ai_client.get_response(
+                                    last_message,
+                                    self.current_nick,
+                                    channel=channel_lower,
+                                    add_to_history=True,
+                                    include_history=True
+                                )
+                                if response:
+                                    self.send_channel_message(channel_name, response)
+                                    # send_channel_message will schedule next response
+                                else:
+                                    self._schedule_next_response(channel_name)
+                            else:
+                                self._schedule_next_response(channel_name)
+                        elif time_until_response <= 0:
+                            self.logger.debug(f"Timer expired but bot was last speaker in {channel_name}, rescheduling")
+                            self._schedule_next_response(channel_name)
+                        
+                        # Update next check time based on response timer
+                        next_check = min(next_check, now + max(0.1, time_until_response))
+                        continue
+                    else:
+                        # Conversation ended or not active, clean up timers
+                        if channel_lower in self.conversation_timers:
+                            self.logger.debug(f"Conversation ended in {channel_name}, clearing timers")
+                            del self.conversation_timers[channel_lower]
+                    
+                    # Handle idle chat and random actions for non-active conversations
                     if channel_name not in self.last_chat_times:
                         self.last_chat_times[channel_name] = now
                     if channel_name not in self.last_action_times:
@@ -371,23 +451,30 @@ class IRCBot:
                     
                     # Check idle chat interval
                     idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
-                    time_since_last = now - self.last_chat_times[channel_name]
-                    
-                    if idle_chat_interval > 0 and time_since_last > idle_chat_interval:
-                        # Skip idle chat if we were the last to speak
-                        if self.was_last_speaker(channel_name):
-                            self.logger.debug(f"Skipping idle chat in {channel_name} - last message was from bot")
-                            continue
-                        self.logger.debug(f"Attempting idle chat in {channel_name} (interval: {idle_chat_interval}s, last chat: {time_since_last:.0f}s ago)")
-                        self._random_chat(channel_name)
-                        # Only update the timer if we actually sent a message
-                        self.last_chat_times[channel_name] = now
+                    if idle_chat_interval > 0:
+                        time_until_chat = (self.last_chat_times[channel_name] + idle_chat_interval) - now
+                        if time_until_chat <= 0:
+                            # Skip idle chat if we were the last to speak
+                            if not self.was_last_speaker(channel_name):
+                                self.logger.debug(f"Attempting idle chat in {channel_name}")
+                                self._random_chat(channel_name)
+                                self.last_chat_times[channel_name] = now
+                        else:
+                            next_check = min(next_check, now + time_until_chat)
                     
                     # Check random action interval
                     random_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
-                    if random_action_interval > 0 and now - self.last_action_times[channel_name] > random_action_interval:
-                        self.last_action_times[channel_name] = now
-                        self._random_action(channel_name)
+                    if random_action_interval > 0:
+                        time_until_action = (self.last_action_times[channel_name] + random_action_interval) - now
+                        if time_until_action <= 0:
+                            self._random_action(channel_name)
+                            self.last_action_times[channel_name] = now
+                        else:
+                            next_check = min(next_check, now + time_until_action)
+                
+                # Calculate how long to sleep until next check is needed
+                sleep_time = max(0.1, next_check - time.time())  # Ensure minimum 0.1s sleep
+                time.sleep(sleep_time)
                     
             except Exception as e:
                 self.logger.error(f"Error in random actions loop: {e}")
@@ -397,7 +484,15 @@ class IRCBot:
         """Check if the bot is currently in a channel."""
         # Case insensitive channel check
         channel_lower = channel.lower()
-        return any(ch.lower() == channel_lower for ch in self.channel_users.keys())
+        
+        # Check if we're in the channel and have our current nick registered there
+        is_in = any(ch.lower() == channel_lower and self.current_nick in self.channel_users[ch] 
+                   for ch in self.channel_users.keys())
+        
+        if not is_in:
+            self.logger.debug(f"Not in channel {channel} (current_nick: {self.current_nick})")
+        
+        return is_in
 
     def was_last_speaker(self, channel):
         """Check if the bot was the last to speak in the channel."""
@@ -409,7 +504,7 @@ class IRCBot:
                 last_message = channel_history[-1]
                 if ': ' in last_message:
                     last_nick = last_message.split(': ', 1)[0].strip()
-                    is_last = last_nick.lower() == self.nick.lower()
+                    is_last = last_nick.lower() == self.current_nick.lower()
                     return is_last
             except Exception as e:
                 self.logger.error(f"Error checking last message in {channel}: {e}")
@@ -417,11 +512,7 @@ class IRCBot:
         return False
 
     def _random_chat(self, target_channel=None):
-        """Generate and send a random chat message with context.
-        
-        Args:
-            target_channel: Optional specific channel name to generate chat for
-        """
+        """Generate and send a random chat message with context."""
         if not self.channel_users:
             return
             
@@ -451,7 +542,7 @@ class IRCBot:
             prompt = self.get_channel_config(channel_name, 'ai_prompt_idle', self.config['ai_prompt_idle'])
             message = self.ai_client.get_response(
                 prompt, 
-                self.nick, 
+                self.current_nick,  # Use current_nick
                 channel=channel_name, 
                 include_history=include_history,
                 add_to_history=False    # Don't add the prompt to history
@@ -461,11 +552,7 @@ class IRCBot:
                 self.logger.debug(f"Sent idle chat to {channel_name}")
 
     def _random_action(self, target_channel=None):
-        """Perform a random action (topic change or kick).
-        
-        Args:
-            target_channel: Optional specific channel to perform action in
-        """
+        """Perform a random action (topic change or kick)."""
         import random
         if not self.channel_users:
             return
@@ -504,7 +591,7 @@ class IRCBot:
                 possible_targets = [
                     nick for nick in recent_users
                     if nick in channel_users  # User is still in channel
-                    and nick != self.nick  # Not the bot
+                    and nick.lower() != self.current_nick.lower()  # Not the bot (case insensitive)
                     and not channel_users[nick].get('op', False)  # Not an op
                 ]
                 
@@ -520,11 +607,14 @@ class IRCBot:
 
     def run(self):
         """Start the bot."""
+        # Start random actions thread
+        actions_thread = threading.Thread(target=self.random_actions_loop, daemon=True, name="RandomActionsLoop")
+        actions_thread.start()
+        self.logger.info("Started random actions loop thread")
+        
+        # Connect and handle reconnects
         self.connect()
         time.sleep(2)  # Wait for connection to stabilize
-        
-        # Start random actions thread
-        threading.Thread(target=self.random_actions_loop, daemon=True).start()
         
         # Keep the main thread alive
         while True:
@@ -543,11 +633,12 @@ class IRCBot:
         # Reset action timers to trigger on next check
         self.last_chat_times = {}
         self.last_action_times = {}
+        self.last_check_times = {}
         self.logger.debug("Reset action timers during config update")
 
     def generate_idle_chat(self):
         """Generate and send an idle chat message."""
-        message = self.ai_client.get_response(self.config['ai_prompt_idle'], self.nick)
+        message = self.ai_client.get_response(self.config['ai_prompt_idle'], self.current_nick)
         if message:
             self.send_channel_message(self.current_channel, message)
 
@@ -575,6 +666,40 @@ class IRCBot:
             self.logger.error(f"Error reloading config: {e}")
             return False
 
+    def _should_continue_conversation(self, channel):
+        """Check if we should continue participating in conversation for this channel."""
+        # Get channel-specific settings
+        ai_continue = self.get_channel_config(channel, 'ai_continue', False)
+        if not ai_continue:
+            return False
+            
+        # Check if we've been triggered recently
+        last_trigger = self.last_trigger_times.get(channel.lower(), 0)
+        if not last_trigger:
+            return False
+            
+        # Get continuation timeout
+        timeout_mins = self.get_channel_config(channel, 'ai_continue_mins', 5)
+        timeout_secs = timeout_mins * 60
+        
+        # Check if we're still within the timeout period
+        time_since_trigger = time.time() - last_trigger
+        within_timeout = time_since_trigger <= timeout_secs
+        
+        return within_timeout
+
+    def _update_trigger_time(self, channel):
+        """Update the last trigger time for a channel and initialize conversation timer."""
+        channel_lower = channel.lower()
+        now = time.time()
+        self.last_trigger_times[channel_lower] = now
+        
+        # Initialize or update the conversation timer
+        if self._should_continue_conversation(channel):
+            continue_freq = self.get_channel_config(channel, 'ai_continue_freq', 30)
+            self.conversation_timers[channel_lower] = now + continue_freq
+            self.logger.debug(f"Scheduled next response for {channel} in {continue_freq}s")
+
     def handle_channel_message(self, nick, userhost, channel, message):
         """Handle a channel message."""
         # Use lowercase channel name for consistency
@@ -601,8 +726,8 @@ class IRCBot:
         history_entry = f"{nick}: {message}"
         self.ai_client.add_to_history(history_entry, channel_lower)
 
-        # Only reset idle timer for messages from other users
-        if nick.lower() != self.nick.lower():
+        # Update last chat time for any user's message (except our own)
+        if nick.lower() != self.current_nick.lower():
             self.last_chat_times[channel_lower] = time.time()
 
         # Check for commands first
@@ -629,14 +754,17 @@ class IRCBot:
 
         # Process direct messages to the bot (nick: message)
         message_lower = message.lower()
-        if message_lower.startswith(f"{self.nick.lower()}:"):
+        if message_lower.startswith(f"{self.current_nick.lower()}:"):
+            # Direct messages always get a response and update trigger time
+            self._update_trigger_time(channel_lower)
+            
             # Check if we should include chat history context
             include_history = self.get_channel_config(channel, 'ai_context_direct', False)
             self.logger.debug(f"Direct message in {channel} - using {'context' if include_history else 'no context'}")
             
             response = self.ai_client.get_response(
                 message, 
-                nick, 
+                self.current_nick,
                 channel=channel_lower, 
                 add_to_history=True,
                 include_history=include_history
@@ -653,25 +781,28 @@ class IRCBot:
         
         if ai_mention:
             # First check for direct prefix which we already handled
-            if message_lower.startswith(f"{self.nick.lower()}:"):
+            if message_lower.startswith(f"{self.current_nick.lower()}:"):
                 return
                 
             # Split message into words and check if any word matches the bot's nick
             # Add a space before and after the message to handle edge cases
             message_with_spaces = f" {message_lower} "
-            nick_lower = self.nick.lower()
+            nick_lower = self.current_nick.lower()
             
             # Check for nickname followed by common punctuation or space
             if f" {nick_lower}" in message_with_spaces and any(
                 message_with_spaces.find(f" {nick_lower}{p}") != -1 
                 for p in ["", " ", "!", "?", ".", ",", ";", ":", ")", "]", "}", "~"]
             ):
+                # Mentions also get a response and update trigger time
+                self._update_trigger_time(channel_lower)
+                
                 self.logger.debug(f"Bot mentioned by {nick} in {channel}")
                 # Check if we should include chat history context
                 include_history = self.get_channel_config(channel, 'ai_context_mention', True)
                 response = self.ai_client.get_response(
                     message,
-                    nick,
+                    self.current_nick,
                     channel=channel_lower,
                     add_to_history=True,
                     include_history=include_history
@@ -681,6 +812,7 @@ class IRCBot:
                         self.logger.debug(f"Delaying response by {ai_delay:.1f}s")
                         time.sleep(ai_delay)
                     self.send_channel_message(channel, response)
+                return
 
     def handle_private_message(self, nick, userhost, message):
         """Handle a private message."""
@@ -689,7 +821,7 @@ class IRCBot:
             return
 
         # Process message if not flood
-        response = self.ai_client.get_response(message, nick)
+        response = self.ai_client.get_response(message, self.current_nick)  # Use current_nick
         if response:
             self.send_raw(f"NOTICE {nick} :{response}")
         self.ai_client.add_to_history(f"{nick}: {message}")
@@ -760,7 +892,7 @@ class IRCBot:
             bool: True if user is protected, False otherwise
         """
         # Always protect the bot
-        if nick.lower() == self.nick.lower():
+        if nick.lower() == self.current_nick.lower():
             return True
             
         # Check if user is a channel op
@@ -777,3 +909,31 @@ class IRCBot:
             return True
             
         return False
+
+    def handle_nick(self, nick, userhost, params):
+        """Handle NICK command."""
+        new_nick = params.lstrip(':')
+        
+        # Track our own nick changes
+        if nick.lower() == self.current_nick.lower():
+            old_nick = self.current_nick
+            self.current_nick = new_nick
+            if new_nick == self.nick:
+                self.logger.info(f"Successfully recovered primary nickname {self.nick}")
+            else:
+                self.logger.debug(f"Our nickname changed from {old_nick} to {new_nick}")
+        
+        # Update user tracking
+        if nick in self.users:
+            user_data = self.users[nick]  # Save the data before removing
+            self.users[new_nick] = user_data  # Add with new nick
+            del self.users[nick]  # Remove old nick
+            
+        # Update channel user tracking
+        for channel in self.channel_users.values():
+            if nick in channel:
+                user_data = channel[nick]  # Save the data before removing
+                channel[new_nick] = user_data  # Add with new nick
+                del channel[nick]  # Remove old nick
+                
+        self.logger.debug(f"User {nick} changed nick to {new_nick}")
