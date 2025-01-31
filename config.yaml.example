@@ -1,0 +1,230 @@
+# Bot nickname
+nick: "Quip"
+
+# Bot real name (gecos)
+realname: "quip (verb): make a witty remark"
+
+# Bot ident
+ident: "quip"
+
+# User mode to set after connecting (e.g. "+ix" for invisible and external immunity)
+usermode: "+ix"
+
+# Commands to send after connecting (before joining channels)
+post_connect_commands:
+  #- "PRIVMSG x@channels.undernet.org LOGIN myUser myPassword"  # Example: login to X
+  #- "NS IDENTIFY mypassword"  # Example: identify to NickServ
+  #- "HS ON"                   # Example: enable host cloaking
+  #- "MODE $nick +x"           # Example: set host cloak (uses $nick variable)
+
+# SASL Authentication (optional)
+sasl:
+  enabled: false
+  username: "quip"  # SASL username (usually same as nick)
+  password: ""      # SASL password
+  mechanism: "PLAIN"  # Currently only PLAIN is supported
+
+# Command prefix (e.g., !, ., @, $, etc)
+cmd_prefix: "@"
+
+# Bot administrators (can use all commands)
+admins:
+  - "sid479710@*.irccloud.com"    # Example format
+  - "Empus"                       # Network account format
+  - "empus@172.16.164.*"
+
+# List of IRC servers to connect to
+servers:
+  - host: "irc.libera.chat"
+    port: 6697
+    tls: true  # Enable TLS/SSL
+    verify_cert: true  # Verify server certificate (recommended)
+    password: ""  # Optional server password
+
+  - host: "irc.undernet.org"
+    port: 6667
+    tls: false  # Plain text connection
+    password: ""
+
+  - host: "irc.rizon.net"
+    port: 6697
+    tls: true
+    verify_cert: false  # Skip certificate verification (not recommended)
+    password: ""
+
+# List of channels to join
+# Global bot settings can be overridden per channel
+channels:
+  - name: "#mychan"
+    key: "my_key!"  # Optional channel key
+    floodpro:
+      lines: 5          # Number of lines
+      seconds: 3        # Time window in seconds
+      ban_time: 5       # Ban duration in minutes
+    chat_history: 50    # Number of messages to keep in history
+    #ai_mention: true    # Override global setting per channel
+    #ai_context_direct: false   # Override global setting per channel
+    #ai_context_mention: true   # Override global setting per channel
+    #ai_context_idle: true      # Override global setting per channel
+    # Channel-specific overrides (all optional)
+    #ai_service: "openai"  # Override AI service for this channel
+    #ai_key: "sk-channel-specific-key"  # Override API key
+    #ai_model: "gpt-4"  # Use a different model for this channel
+    #ai_entrance: true  # Channel-specific entrance setting
+    #ai_prompt_entrance: |
+    #  Generate a developer-focused entrance message.
+    #  Keep it witty and related to coding/debugging.
+    #ai_prompt_default: |
+    #  You are DevQuip, a sarcastic AI who specializes in developer humor and coding jokes.
+    #  Make references to bugs, features, and general programming concepts.
+    #ai_prompt_topic: |
+    #  Generate a programming-related topic that's both funny and relevant.
+    #  Include references to coding, debugging, or development practices.
+    #ai_prompt_idle: |
+    #  Generate idle chat focused on development topics, bugs, or coding practices.
+    #  Keep it light and funny.
+    #ai_prompt_kick: |
+    #  Generate kick reasons related to programming mistakes or coding faux pas.
+    #idle_chat_interval: 30  # More frequent chat in dev channel
+    #random_action_interval: 120  # Less frequent actions
+    #admins:  # Channel-specific admins
+    #  - "DevLead"
+    #  - "SeniorDev"
+    #commands:  # Channel-specific command permissions
+    #  kick:
+    #    requires_op: true
+    #    requires_voice: false
+    #    admin_only: true
+    #  topic:
+    #    requires_op: false
+    #    requires_voice: true
+    #    admin_only: false
+
+  #- name: "#anotherchan"
+  #  key: ""
+  #  floodpro:
+  #    lines: 5
+  #    seconds: 3
+  #     ban_time: 5
+  #  chat_history: 50
+    # Different personality for general chat channel
+    #ai_prompt_default: |
+    #  You are Quip, a witty and casual AI who loves general conversation.
+    #  Focus on humor and light-hearted banter.
+    #idle_chat_interval: 60  # Standard chat interval
+    #random_action_interval: 300  # Rare random actions
+
+
+# IRC message rate limiting
+irc_burst_size: 4     # Maximum number of messages that can be sent immediately
+irc_fill_rate: 1.0    # Rate at which message tokens are regenerated (per second)
+
+# Global private message flood protection
+privmsg_floodpro:
+  lines: 2              # Number of lines
+  seconds: 1            # Time window in seconds
+  ignore_time: 10       # Ignore duration in minutes
+
+# AI service to use (openai, perplexity, or grok)
+ai_service: "openai"
+
+# AI API key
+ai_key: "REDACTED"
+
+# AI model to use
+ai_model: "gpt-4o-mini"  # Examples: gpt-4o-mini, gpt-4o
+
+# Whether to respond when the bot's nickname is mentioned (global default)
+ai_mention: true
+
+# Whether to include chat history context in different message types (global defaults)
+ai_context_direct: true   # For direct messages (nick: message)
+ai_context_mention: true  # For mentions of the bot's nick
+ai_context_idle: true     # For idle chat interval messages
+
+# Artificial delay range (in seconds) before responding to direct messages or mentions
+ai_delay: [5.0, 8.0]  # [min, max] - Set to [0, 0] to disable delay
+
+# Whether to generate an entrance message when joining channels
+ai_entrance: true
+
+# AI prompt for generating entrance messages
+ai_prompt_entrance: |
+  Generate a witty and sarcastic entrance message for when the bot joins a channel.
+  Keep it brief, funny, and channel-appropriate.
+  Examples:
+  - "Finally, some intelligent life in this channel!"
+  - "Did someone order some sarcasm? No? Well, you got it anyway."
+  - "Behold, your digital overlord has arrived!"
+
+# Default prompt or "persona" to guide the bot's responses
+# The bot is sarcastic and comedic by default
+ai_prompt_default: |
+  You are Quip, a witty and sarcastic person who enjoys teasing and joking
+  around with IRC users. You occasionally toss out playful insults or comedic
+  remarks. You also have the power to kick or ban users in a humorous way. Don't admit
+  that you are an AI, just act like a human.
+
+# AI prompt for generating channel topics
+ai_prompt_topic: |
+  Generate a witty and sarcastic topic for the current IRC channel.
+  The topic should be a single line that's funny and relevant to the channel.
+  Examples:
+  - "Welcome to debugging hell, population: growing rapidly"
+  - "Where code goes to die... and occasionally get resurrected"
+  - "**TODO**: Add clever topic... _maybe tomorrow_"
+  Make it punchy and channel-appropriate.
+
+# AI prompt for generating idle chat messages
+ai_prompt_idle: |
+  Say something witty or start a conversation. Be casual and natural, like you're 
+  chatting with friends. You can be sarcastic, make observations, or ask questions.
+  Keep it brief and chat-like.
+
+# AI prompt for generating reasons to kick users
+ai_prompt_kick: |
+  Generate a humorous reason to kick a user from an IRC channel.
+  Keep it under 300 characters and make it funny but not overly offensive.
+  Examples:
+  - Was caught trying to teach regex to a potato
+  - Violated the laws of physics and common sense simultaneously
+  - Attempted to debug by adding more bugs
+
+# How often (in seconds) to post a random chat message if the channel is idle
+# Set to 0 or comment out to disable random chat messages.
+idle_chat_interval: 60  # 60 secs
+
+# How often (in seconds) to perform random actions (kicks, topic changes). 
+# Set to 0 or comment out to disable random actions.
+random_action_interval: 60  # 1 minutes
+
+
+# Command configuration
+commands:
+  kick:
+    requires_op: true     # Requires channel operator status
+    requires_voice: false # Requires voice status
+    admin_only: false     # Requires admin status
+  boot:
+    requires_op: true
+    requires_voice: false
+    admin_only: false
+  topic:
+    requires_op: true
+    requires_voice: false
+    admin_only: false
+  say:
+    requires_op: false
+    requires_voice: true
+    admin_only: true
+  reload:
+    requires_op: false
+    requires_voice: false
+    admin_only: true
+
+# Logging configuration
+log_level: "DEBUG"   # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_file: "quip.log"  # Log file name
+
+# General bot configuration
+pid_file: "quip.pid"  # Path to PID file when running as daemon 

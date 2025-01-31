@@ -1,0 +1,22 @@
+# Python virtual environment dir
+.venv/
+
+# Config file
+config.yaml
+
+# Log files
+*.log
+
+# PID file
+*.pid
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+.cursorrules
