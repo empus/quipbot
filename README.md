@@ -146,7 +146,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Configure your `config.yaml` file with appropriate settings
+4. Configure your `config.yaml` file with appropriate settings:
+```bash
+cp config.yaml.example config.yaml
+nvim config.yaml
+```
 
 
 ## Running the Bot
