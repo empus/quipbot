@@ -191,7 +191,7 @@ The bot can be started in console mode with the following command:
 python3 -m quipbot -c
 ```
 
-Altneratively, check the `quip.log` file for more information.
+Alternatively, check the `quip.log` file for more information.
 
 ## Contributing
 

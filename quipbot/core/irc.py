@@ -580,20 +580,21 @@ class IRCBot:
         # Use lowercase channel name for consistency
         channel_lower = channel.lower()
         
-        # Check for channel flood
-        if not self.floodpro.check_channel_flood(channel, nick, userhost):
-            # Get and execute ban commands
-            for cmd in self.floodpro.get_ban_command(channel, nick, userhost):
-                self.send_raw(cmd)
-            return
-
         # Get ignore list (combine global and channel-specific)
         global_ignores = self.config.get('ignore_nicks', [])
         channel_ignores = self.get_channel_config(channel, 'ignore_nicks', [])
         ignore_list = [n.lower() for n in global_ignores + channel_ignores]
         
-        # Check if this nick should be ignored
+        # Check if this nick should be ignored - do this first before any processing
         if nick.lower() in ignore_list:
+            self.logger.debug(f"Ignoring message from {nick} in {channel} (in ignore list)")
+            return
+
+        # Check for channel flood
+        if not self.floodpro.check_channel_flood(channel, nick, userhost):
+            # Get and execute ban commands
+            for cmd in self.floodpro.get_ban_command(channel, nick, userhost):
+                self.send_raw(cmd)
             return
 
         # Add message to history
