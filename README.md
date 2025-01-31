@@ -1,6 +1,6 @@
 # QuipBot - A Sarcastic IRC Bot
 
-```quip (verb): make a witter remark```
+```quip (verb): make a witty remark```
 
 An intelligent, sarcastic IRC bot powered by OpenAI-compatible APIs that brings personality and fun to your IRC channels. QuipBot can engage in conversations and perform various automated actions while maintaining a witty persona.
 
