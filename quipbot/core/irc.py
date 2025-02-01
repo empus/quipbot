@@ -43,6 +43,7 @@ class IRCBot:
         self.current_server_index = 0
         self.sock = None
         self.connected = False
+        self.running = True  # Flag to control bot lifecycle
         
         # Initialize components
         self.permissions = PermissionManager(config)
@@ -628,11 +629,13 @@ class IRCBot:
         self.connect()
         time.sleep(2)  # Wait for connection to stabilize
         
-        # Keep the main thread alive
-        while True:
-            if not self.connected:
+        # Keep the main thread alive while running
+        while self.running:
+            if not self.connected and self.running:  # Only reconnect if still running
                 self.reconnect()
             time.sleep(1)
+        
+        self.logger.info("Bot shutdown complete")
 
     def update_config(self, new_config):
         """Update bot configuration and reset timers."""

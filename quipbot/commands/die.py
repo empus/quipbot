@@ -2,6 +2,8 @@
 
 import time
 import sys
+import threading
+import os
 from .. import commands
 
 class DieCommand(commands.Command):
@@ -25,16 +27,29 @@ class DieCommand(commands.Command):
         # Get quit reason
         reason = " ".join(args) if args else f"Shutdown requested by {nick}"
         
-        # Send quit message to server
-        self.bot.send_raw(f"QUIT :{reason}")
+        # First stop the main bot loop to prevent reconnection
+        self.bot.running = False
+        
+        # Then handle the connection cleanup
+        self.bot.connected = False
+        
+        try:
+            # Send final QUIT and close socket
+            if self.bot.sock:
+                self.bot.send_raw(f"QUIT :{reason}")
+                time.sleep(0.1)  # Small delay to allow QUIT to send
+                self.bot.sock.close()
+        except:
+            pass  # Ignore any errors during shutdown
         
         # Schedule process exit after 2 seconds
         def delayed_exit():
             time.sleep(2)
-            sys.exit(0)
+            os._exit(0)
             
-        # Start exit timer in a new thread
-        import threading
-        threading.Thread(target=delayed_exit, daemon=True).start()
+        # Start exit timer in a non-daemon thread
+        exit_thread = threading.Thread(target=delayed_exit)
+        exit_thread.daemon = False
+        exit_thread.start()
         
         return None  # No response needed since we're quitting 
