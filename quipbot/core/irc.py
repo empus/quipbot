@@ -29,6 +29,9 @@ class IRCBot:
         self.servers = config['servers']
         self.channels = config['channels']
         
+        # Sleep tracking
+        self.sleep_until = {}  # {channel: wake_time}
+        
         # SASL configuration
         self.sasl_config = config.get('sasl', {})
         self.sasl_authenticated = False
@@ -401,6 +404,10 @@ class IRCBot:
                     # Skip if we're not in the channel
                     if not self.is_in_channel(channel_name):
                         continue
+
+                    # Skip if sleeping
+                    if self.is_sleeping(channel_name):
+                        continue
                     
                     # Check for active conversation
                     if self._should_continue_conversation(channel_name):
@@ -760,6 +767,11 @@ class IRCBot:
                 self.handler._handle_command(command, nick, channel, args)
                 return
 
+        # If sleeping and not a command, don't process AI responses
+        if self.is_sleeping(channel):
+            self.logger.debug(f"Skipping AI processing in {channel} - bot is sleeping")
+            return
+
         # Get AI response delay setting
         ai_delay_range = self.get_channel_config(channel, 'ai_delay', [0, 0])
         if isinstance(ai_delay_range, (int, float)):  # Handle old config format
@@ -970,3 +982,53 @@ class IRCBot:
                 del channel[nick]  # Remove old nick
                 
         self.logger.debug(f"User {nick} changed nick to {new_nick}")
+
+    def is_sleeping(self, channel):
+        """Check if the bot is currently sleeping in a channel."""
+        channel_lower = channel.lower()
+        if channel_lower in self.sleep_until:
+            now = time.time()
+            if now >= self.sleep_until[channel_lower]:
+                # Sleep time has expired, wake up
+                del self.sleep_until[channel_lower]
+                self.logger.info(f"Bot automatically woke up in {channel}")
+                return False
+            return True
+        return False
+
+    def handle_sleep_command(self, nick, channel, args):
+        """Handle the sleep command."""
+        if not args:
+            self.send_channel_message(channel, f"Usage: {self.config['cmd_prefix']}sleep <minutes>")
+            return
+
+        try:
+            minutes = int(args[0])
+            if minutes <= 0:
+                self.send_channel_message(channel, "Sleep time must be positive")
+                return
+
+            # Get sleep_max from config (channel-specific or global)
+            sleep_max = self.get_channel_config(channel, 'sleep_max', 60)
+            
+            if minutes > sleep_max:
+                self.send_channel_message(channel, f"Sleep time cannot exceed {sleep_max} minutes")
+                return
+
+            channel_lower = channel.lower()
+            self.sleep_until[channel_lower] = time.time() + (minutes * 60)
+            self.logger.info(f"Bot put to sleep in {channel} for {minutes} minutes by {nick}")
+            self.send_channel_message(channel, f"Going to sleep for {minutes} minutes. Wake me with {self.config['cmd_prefix']}wake")
+
+        except ValueError:
+            self.send_channel_message(channel, "Sleep time must be a number")
+
+    def handle_wake_command(self, nick, channel, args):
+        """Handle the wake command."""
+        channel_lower = channel.lower()
+        if channel_lower in self.sleep_until:
+            del self.sleep_until[channel_lower]
+            self.logger.info(f"Bot woken up in {channel} by {nick}")
+            self.send_channel_message(channel, "I'm awake! Ready to chat again.")
+        else:
+            self.send_channel_message(channel, "I wasn't sleeping!")

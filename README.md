@@ -157,6 +157,7 @@ nvim config.yaml
 
 1. Run the bot:
 ```bash
+source .venv/bin/activate
 python3 -m quipbot
 ```
 
@@ -181,8 +182,19 @@ options:
 - Python 3.6+
 - OpenAI API key (or other supported AI service)
 - Required Python packages (see requirements.txt)
+- Rust compiler
 
 ## Troubleshooting
+
+# Missing Rust compiler
+
+If you get an error about the Rust compiler, you need to install it. 
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+# Bot Logging
 
 Consider increasing the log verbosity to `DEBUG` with the `log_level` setting in the `config.yaml` file to get more information about what the bot is doing. 
 

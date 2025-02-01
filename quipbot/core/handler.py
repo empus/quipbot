@@ -19,19 +19,31 @@ class MessageHandler:
     def _load_commands(self):
         """Load all command modules."""
         commands_path = Path(__file__).parent.parent / 'commands'
+        self.logger.debug(f"Loading commands from: {commands_path}")
+        
         for _, name, _ in pkgutil.iter_modules([str(commands_path)]):
             if name != '__init__':
                 try:
+                    self.logger.debug(f"Attempting to load command module: {name}")
                     module = importlib.import_module(f'..commands.{name}', package=__package__)
+                    
                     # Find the command class (should be the only class that inherits from Command)
+                    command_class_found = False
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
                         if isinstance(attr, type) and issubclass(attr, commands.Command) and attr != commands.Command:
                             cmd = attr(self.bot)
                             self.commands[cmd.name] = cmd
+                            command_class_found = True
                             self.logger.debug(f"Loaded command: {cmd.name}")
+                            
+                    if not command_class_found:
+                        self.logger.warning(f"No command class found in module: {name}")
+                        
                 except Exception as e:
                     self.logger.error(f"Failed to load command {name}: {e}")
+                    
+        self.logger.info(f"Loaded commands: {', '.join(sorted(self.commands.keys()))}")
 
     def handle_line(self, line):
         """Handle a line from the IRC server."""
@@ -247,39 +259,67 @@ class MessageHandler:
                         self.bot.send_raw(f"JOIN {invited_channel} {key}")
                         break
 
-    def _handle_command(self, command_name, nick, channel, args):
-        """Handle a bot command."""
-        command = self.commands.get(command_name)
-        if not command:
-            return
-
+    def _check_command_permissions(self, nick, channel, cmd_config):
+        """Check if a user has permission to use a command.
+        
+        Args:
+            nick: The nickname trying to use the command
+            channel: The channel where the command was used
+            cmd_config: The command configuration dict
+            
+        Returns:
+            bool: True if user has permission, False otherwise
+        """
         # Get user info including host
         user_info = self.bot.users.get(nick, {})
         if not user_info:
             self.logger.debug(f"No user info found for {nick}")
-            return
             
-        self.logger.debug(f"Checking permissions for {nick} with host {user_info.get('host', 'None')}")
-
         # Get channel-specific user info
         channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
+        
+        # Check if user is admin first - admins can use any command
+        is_admin = False
+        if user_info.get('host'):
+            is_admin = self.bot.permissions.is_admin(nick, user_info['host'])
+            if is_admin:
+                return True
+            
+        # Check admin_only flag
+        if cmd_config.get('admin_only', False):
+            self.bot.send_channel_message(channel, f"Sorry {nick}, that command is for admins only.")
+            return False
+            
+        # For non-admins, check op requirement
+        if cmd_config.get('requires_op', False):
+            if not channel_info.get('op', False):
+                self.bot.send_channel_message(channel, f"Sorry {nick}, that command requires op status.")
+                return False
+                
+        # For non-admins, check voice requirement (ops can also use voice-required commands)
+        if cmd_config.get('requires_voice', False):
+            if not (channel_info.get('voice', False) or channel_info.get('op', False)):
+                self.bot.send_channel_message(channel, f"Sorry {nick}, that command requires voice or op status.")
+                return False
+                
+        return True
 
-        # Check permissions with full user info
-        if not self.bot.permissions.has_permission(
-            command_name, 
-            nick,
-            user_info,
-            channel_info,
-            channel
-        ):
-            self.bot.send_raw(f"NOTICE {nick} :You don't have permission to use that command.")
-            self.logger.warning(f"User {nick} attempted to use command {command_name} without permission")
+    def _handle_command(self, command, nick, channel, args):
+        """Handle a command."""
+        # Get command config
+        cmd_config = self.bot.get_channel_command_config(channel, command)
+        
+        # Check permissions
+        if not self._check_command_permissions(nick, channel, cmd_config):
             return
-
-        self.logger.debug(f"Command {command_name} authorized for {nick} in {channel}")
-        response = command.execute(nick, channel, args)
-        if response:
-            self.bot.send_channel_message(channel, response)
+            
+        # Handle commands
+        if command in self.commands:
+            response = self.commands[command].execute(nick, channel, args)
+            if response:
+                self.bot.send_channel_message(channel, response)
+        else:
+            self.bot.send_channel_message(channel, f"Unknown command: {command}")
 
     def _parse_prefix(self, prefix):
         """Parse IRC prefix into nick and userhost."""

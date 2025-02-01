@@ -221,6 +221,8 @@ ai_continue_mins: 5
 # Global default (can be overridden per channel)
 ai_continue_freq: 30  # Check every N seconds during active conversations
 
+# Maximum time in minutes that the bot can be put to sleep (global default)
+sleep_max: 60
 
 # Command configuration
 commands:
