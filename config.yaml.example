@@ -261,6 +261,10 @@ commands:
     requires_op: false
     requires_voice: false
     admin_only: true
+  jump:
+    requires_op: false
+    requires_voice: false
+    admin_only: true
 
 # Logging configuration
 log_level: "DEBUG"   # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL

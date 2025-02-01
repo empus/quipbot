@@ -38,6 +38,8 @@ from .say import SayCommand
 from .sleep import SleepCommand
 from .topic import TopicCommand
 from .wake import WakeCommand
+from .die import DieCommand
+from .jump import JumpCommand
 
 # Export all commands
 __all__ = [
@@ -50,4 +52,6 @@ __all__ = [
     'SleepCommand',
     'TopicCommand',
     'WakeCommand',
+    'DieCommand',
+    'JumpCommand',
 ] 

@@ -584,6 +584,13 @@ class IRCBot:
             if random_action_interval <= 0:
                 continue
 
+            # Check if bot is opped in the channel
+            channel_users = self.channel_users.get(channel_name, {})
+            bot_user = channel_users.get(self.current_nick, {})
+            if not bot_user.get('op', False):
+                self.logger.debug(f"Skipping random action in {channel_name} - bot is not opped")
+                continue
+
             action = random.choice(['topic', 'kick'])
 
             if action == 'topic':
@@ -596,7 +603,6 @@ class IRCBot:
                     self.send_raw(f"TOPIC {channel_name} :{formatted_topic}")
             
             elif action == 'kick':
-                channel_users = self.channel_users.get(channel_name, {})
                 # Get list of recently active users in the channel
                 recent_users = self.ai_client.get_recent_users(channel_name)
                 
