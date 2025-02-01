@@ -33,6 +33,11 @@ sasl:
 # Command prefix (e.g., !, ., @, $, etc)
 cmd_prefix: "@"
 
+ignore_regex:
+  - "^!"          # Ignore messages starting with !
+  - "^\\."        # Ignore messages starting with .
+  - "^[cC]\\s"    # Ignore messages starting with c followed by a space
+
 # Bot administrators (can use all commands)
 admins:
   - "sid479710@*.irccloud.com"    # Example format

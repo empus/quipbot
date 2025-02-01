@@ -13,6 +13,7 @@ from ..utils.floodpro import FloodProtection
 from ..utils.tokenbucket import TokenBucket
 from ..utils.logger import setup_logger
 import yaml
+import re
 
 class IRCBot:
     def __init__(self, config):
@@ -705,15 +706,33 @@ class IRCBot:
         # Use lowercase channel name for consistency
         channel_lower = channel.lower()
         
-        # Get ignore list (combine global and channel-specific)
-        global_ignores = self.config.get('ignore_nicks', [])
-        channel_ignores = self.get_channel_config(channel, 'ignore_nicks', [])
-        ignore_list = [n.lower() for n in global_ignores + channel_ignores]
+        # Get ignore lists using get_channel_config for consistency
+        global_ignores = [n.lower() for n in self.config.get('ignore_nicks', [])]
+        channel_ignores = [n.lower() for n in self.get_channel_config(channel, 'ignore_nicks', [])]
+        ignore_list = list(set(global_ignores + channel_ignores))  # Deduplicate combined list
+        
+        # Get regex ignore patterns
+        global_regex = self.config.get('ignore_regex', [])
+        channel_regex = self.get_channel_config(channel, 'ignore_regex', [])
+        regex_patterns = list(set(global_regex + channel_regex))  # Deduplicate combined list
         
         # Check if this nick should be ignored - do this first before any processing
-        if nick.lower() in ignore_list:
-            self.logger.debug(f"Ignoring message from {nick} in {channel} (in ignore list)")
+        nick_lower = nick.lower()
+        if nick_lower in ignore_list:
+            ignore_source = 'global' if nick_lower in global_ignores else 'channel'
+            self.logger.info(f"Ignored message in {channel} from {nick} ({ignore_source} ignore list) - message: {message}")
             return
+            
+        # Check if message matches any ignore regex patterns
+        for pattern in regex_patterns:
+            try:
+                if re.search(pattern, message):
+                    ignore_source = 'global' if pattern in global_regex else 'channel'
+                    self.logger.info(f"Ignored message in {channel} matching pattern '{pattern}' ({ignore_source} ignore_regex) - message: {message}")
+                    return
+            except re.error as e:
+                self.logger.error(f"Invalid regex pattern '{pattern}': {e}")
+                continue
 
         # Check for channel flood
         if not self.floodpro.check_channel_flood(channel, nick, userhost):
@@ -838,15 +857,29 @@ class IRCBot:
             The channel-specific value if it exists, otherwise the global value,
             or the default if neither exists.
         """
-        # Find channel config
+        # Find channel config - ensure case-insensitive comparison
+        channel_lower = channel.lower()
         channel_config = next(
-            (c for c in self.channels if c['name'].lower() == channel.lower()),
+            (c for c in self.channels if c['name'].lower() == channel_lower),
             None
         )
         
         # First check channel-specific override if it exists
-        if channel_config and key in channel_config:
-            return channel_config[key]
+        if channel_config is not None:
+            # Handle nested keys with dots (e.g. 'commands.kick')
+            if '.' in key:
+                parts = key.split('.')
+                value = channel_config
+                for part in parts:
+                    if isinstance(value, dict) and part in value:
+                        value = value[part]
+                    else:
+                        value = None
+                        break
+                if value is not None:
+                    return value
+            elif key in channel_config:
+                return channel_config[key]
             
         # Then check global config
         if key in self.config:
