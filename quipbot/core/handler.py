@@ -77,7 +77,12 @@ class MessageHandler:
 
         # Handle numeric responses
         if command.isdigit():
-            self.bot.handle_numeric(command, params)
+            numeric_handler = getattr(self, f'handle_{command}', None)
+            if numeric_handler:
+                self.logger.debug(f"Handling numeric {command} with handler")
+                numeric_handler(nick, userhost, params)
+            else:
+                self.bot.handle_numeric(command, params)
             return
 
         # Handle different commands
@@ -116,11 +121,15 @@ class MessageHandler:
         """Handle JOIN command."""
         channel = params.lstrip(':')
         if nick.lower() == self.bot.current_nick.lower():
+            self.logger.debug(f"Bot joining {channel}")
+            # Clear and rebuild channel users list
             self.bot.channel_users[channel] = {}
             # Add ourselves to the channel user list with current nickname
             self.bot.channel_users[channel][self.bot.current_nick] = {
                 'op': False,
-                'voice': False
+                'voice': False,
+                'account': None,
+                'host': None
             }
             self.logger.info(f"Joined channel: {channel} (as {self.bot.current_nick})")
             
@@ -128,28 +137,37 @@ class MessageHandler:
             self.bot.last_chat_times[channel] = time.time()
             self.bot.last_action_times[channel] = time.time()
             
+            # Server will automatically send NAMES list after JOIN
+            # handle_366 (end of NAMES) will trigger the WHO request
+            
             # Generate and send entrance message if enabled
             if self.bot.config.get('ai_entrance', False):
                 self.logger.debug(f"Generating entrance message for {channel}")
                 entrance_prompt = self.bot.config.get('ai_prompt_entrance', 'Generate a channel entrance message')
                 entrance_msg = self.bot.ai_client.get_response(
                     entrance_prompt,
-                    self.bot.current_nick,  # Use current_nick
+                    self.bot.current_nick,
                     channel=channel,
-                    add_to_history=True  # Add to history so we know we were last speaker
+                    add_to_history=True
                 )
                 if entrance_msg:
                     self.bot.send_channel_message(channel, entrance_msg)
                 else:
                     self.logger.debug(f"Failed to generate entrance message for {channel}")
         else:
+            self.logger.debug(f"User {nick} joining {channel}")
             if channel in self.bot.channel_users:
                 self.bot.channel_users[channel][nick] = {
                     'op': False,
-                    'voice': False
+                    'voice': False,
+                    'account': None,
+                    'host': userhost
                 }
-                self.logger.debug(f"User {nick} joined {channel}")
-                
+                # Request WHOX info just for this user
+                # %tnuhiraf gives us: channel, nick, user, host, ip, realname, account, flags
+                self.bot.send_raw(f"WHO {nick} %tnuhiraf")
+                self.logger.debug(f"Added {nick} to {channel} users: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+        
         # Track user info
         if nick not in self.bot.users:
             self.bot.users[nick] = {'host': userhost}
@@ -159,7 +177,7 @@ class MessageHandler:
     def handle_part(self, nick, userhost, params):
         """Handle PART command."""
         channel = params.split()[0]
-        if nick == self.bot.nick:
+        if nick.lower() == self.bot.current_nick.lower():
             if channel in self.bot.channel_users:
                 del self.bot.channel_users[channel]
                 self.logger.info(f"Left channel: {channel}")
@@ -170,26 +188,39 @@ class MessageHandler:
 
     def handle_quit(self, nick, userhost, params):
         """Handle QUIT command."""
+        # Remove user from all channels they were in
+        for channel, users in self.bot.channel_users.items():
+            if nick in users:
+                del users[nick]
+                self.logger.debug(f"Removed quit user {nick} from {channel}")
+        
+        # Remove from global users list
         if nick in self.bot.users:
             del self.bot.users[nick]
-        for channel in self.bot.channel_users.values():
-            if nick in channel:
-                del channel[nick]
-        self.logger.debug(f"User {nick} quit")
+            self.logger.debug(f"User {nick} quit")
 
     def handle_nick(self, nick, userhost, params):
         """Handle NICK command."""
         new_nick = params.lstrip(':')
+        
+        # Update user in all channels they're in
+        for channel, users in self.bot.channel_users.items():
+            if nick in users:
+                # Preserve user data when changing nick
+                users[new_nick] = users.pop(nick)
+                self.logger.debug(f"Updated nick {nick} to {new_nick} in {channel}")
+        
+        # Update global users list
         if nick in self.bot.users:
             self.bot.users[new_nick] = self.bot.users.pop(nick)
-        for channel in self.bot.channel_users.values():
-            if nick in channel:
-                channel[new_nick] = channel.pop(nick)
-        self.logger.debug(f"User {nick} changed nick to {new_nick}")
+            self.logger.debug(f"User {nick} changed nick to {new_nick}")
 
     def handle_mode(self, nick, userhost, params):
         """Handle MODE command."""
         parts = params.split()
+        if len(parts) < 2:
+            return
+            
         channel = parts[0]
         if channel not in self.bot.channel_users:
             return
@@ -222,17 +253,113 @@ class MessageHandler:
         if len(parts) > 1:
             channel = parts[0].split()[-1]
             nicks = parts[1].split()
+            self.logger.debug(f"Processing NAMES response for {channel} with {len(nicks)} users: {', '.join(nicks)}")
+            
             if channel not in self.bot.channel_users:
                 self.bot.channel_users[channel] = {}
+                self.logger.debug(f"Initializing user list for {channel}")
+            
             for n in nicks:
                 prefix = ''
-                while n[0] in '@+%~&!':
+                while n and n[0] in '@+%~&!':
                     prefix += n[0]
                     n = n[1:]
-                self.bot.channel_users[channel][n] = {
-                    'op': '@' in prefix,
-                    'voice': '+' in prefix
-                }
+                if n:  # Only add if we have a nickname after stripping prefixes
+                    self.bot.channel_users[channel][n] = {
+                        'op': '@' in prefix,
+                        'voice': '+' in prefix,
+                        'account': None,
+                        'host': None
+                    }
+                    self.logger.debug(f"NAMES: Added user {n} to {channel} with prefix '{prefix}', data: {self.bot.channel_users[channel][n]}")
+            
+            self.logger.debug(f"NAMES complete - Users in {channel}: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+
+    def handle_366(self, nick, userhost, params):
+        """Handle end of NAMES list."""
+        # Format: <botnick> <channel> :End of /NAMES list.
+        # Example: "Quip2 #qtest :End of /NAMES list."
+        try:
+            # Split on space, channel is the second parameter
+            parts = params.split()
+            if len(parts) >= 2:
+                channel = parts[1]  # Channel is the second parameter
+                self.logger.debug(f"End of NAMES for {channel} - Raw params: {params}")
+                self.logger.debug(f"Sending WHO request to get full user info")
+                # Send WHO request with WHOX format to get complete user info
+                # %tnuhiraf gives us: channel, nick, user, host, ip, realname, account, flags
+                self.bot.send_raw(f"WHO {channel} %tnuhiraf")
+                self.logger.debug(f"Current users before WHO: {', '.join(sorted(self.bot.channel_users.get(channel, {}).keys()))}")
+        except Exception as e:
+            self.logger.error(f"Error processing end of NAMES: {e} - Raw params: {params}")
+            return
+
+    def handle_352(self, nick, userhost, params):
+        """Handle WHO response (numeric 352)."""
+        # WHO response format: <channel> <user> <host> <server> <nick> <H|G>[*][@|+] :<hopcount> <real_name>
+        parts = params.split()
+        if len(parts) >= 8:
+            channel = parts[0]
+            ident = parts[1]
+            host = parts[2]
+            nick = parts[4]
+            status = parts[5]
+            
+            if channel in self.bot.channel_users:
+                # Update or create user entry
+                if nick not in self.bot.channel_users[channel]:
+                    self.logger.debug(f"WHO: Creating new entry for {nick} in {channel}")
+                    self.bot.channel_users[channel][nick] = {}
+                
+                # Update user info
+                old_data = self.bot.channel_users[channel][nick].copy() if nick in self.bot.channel_users[channel] else {}
+                self.bot.channel_users[channel][nick].update({
+                    'op': '@' in status,
+                    'voice': '+' in status,
+                    'host': f"{ident}@{host}",
+                    'account': None  # Will be updated by 354 response if account is logged in
+                })
+                
+                self.logger.debug(f"WHO: Updated {nick} in {channel} - Old data: {old_data}, New data: {self.bot.channel_users[channel][nick]}")
+                self.logger.debug(f"WHO response - Current users in {channel}: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+
+    def handle_354(self, nick, userhost, params):
+        """Handle WHOX response (numeric 354) for account information."""
+        # WHOX response format: <channel> <nick> <user> <host> <ip> <realname> <account> <flags>
+        parts = params.split()
+        if len(parts) >= 8:
+            channel = parts[0]
+            user_nick = parts[1]
+            ident = parts[2]
+            host = parts[3]
+            account = parts[6] if parts[6] != '0' else None
+            flags = parts[7]
+            
+            if channel in self.bot.channel_users:
+                if user_nick not in self.bot.channel_users[channel]:
+                    self.logger.debug(f"WHOX: Creating new entry for {user_nick} in {channel}")
+                    self.bot.channel_users[channel][user_nick] = {}
+                
+                old_data = self.bot.channel_users[channel][user_nick].copy() if user_nick in self.bot.channel_users[channel] else {}
+                self.bot.channel_users[channel][user_nick].update({
+                    'op': '@' in flags or '*' in flags,
+                    'voice': '+' in flags,
+                    'host': f"{ident}@{host}",
+                    'account': account
+                })
+                
+                self.logger.debug(f"WHOX: Updated {user_nick} in {channel} - Old data: {old_data}, New data: {self.bot.channel_users[channel][user_nick]}")
+                self.logger.debug(f"WHOX response - Current users in {channel}: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+
+    def handle_315(self, nick, userhost, params):
+        """Handle end of WHO list."""
+        # Format: <nick> <channel> :End of /WHO list
+        parts = params.split()
+        if len(parts) >= 1:
+            channel = parts[0]
+            if channel in self.bot.channel_users:
+                self.logger.debug(f"WHO list complete for {channel} - Final user list: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+                self.logger.debug(f"Full channel_users data for {channel}: {self.bot.channel_users[channel]}")
 
     def handle_invite(self, nick, userhost, params):
         """Handle INVITE command."""
@@ -258,6 +385,23 @@ class MessageHandler:
                         key = chan.get('key', '')
                         self.bot.send_raw(f"JOIN {invited_channel} {key}")
                         break
+
+    def handle_kick(self, nick, userhost, params):
+        """Handle KICK command."""
+        parts = params.split()
+        if len(parts) >= 2:
+            channel = parts[0]
+            kicked_nick = parts[1]
+            
+            if channel in self.bot.channel_users:
+                if kicked_nick in self.bot.channel_users[channel]:
+                    del self.bot.channel_users[channel][kicked_nick]
+                    self.logger.debug(f"Removed kicked user {kicked_nick} from {channel}")
+                    
+                # If we were kicked, clear the channel's user list
+                if kicked_nick.lower() == self.bot.current_nick.lower():
+                    del self.bot.channel_users[channel]
+                    self.logger.info(f"Bot was kicked from {channel}")
 
     def _check_command_permissions(self, nick, channel, cmd_config):
         """Check if a user has permission to use a command.

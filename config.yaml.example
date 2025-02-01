@@ -162,6 +162,9 @@ ai_delay: [5.0, 8.0]  # [min, max] - Set to [0, 0] to disable delay
 # Whether to generate an entrance message when joining channels
 ai_entrance: true
 
+# Whether to send the channel's nicklist to the AI for added context
+ai_nicklist: true
+
 # AI prompt for generating entrance messages
 ai_prompt_entrance: |
   Generate a witty and sarcastic entrance message for when the bot joins a channel.
@@ -240,7 +243,7 @@ commands:
     admin_only: false
   say:
     requires_op: false
-    requires_voice: true
+    requires_voice: false
     admin_only: true
   reload:
     requires_op: false

@@ -47,6 +47,7 @@ class IRCBot:
         # Initialize components
         self.permissions = PermissionManager(config)
         self.ai_client = AIClient(config)
+        self.ai_client.bot = self  # Add reference to bot instance
         self.floodpro = FloodProtection(config)
         self.handler = MessageHandler(self)
         
@@ -300,6 +301,9 @@ class IRCBot:
             channel_key = channel.get('key', '')
             self.send_raw(f"JOIN {channel_name} {channel_key}")
             self.logger.debug(f"Joining channel: {channel_name}")
+            # Server will send NAMES list automatically after JOIN
+            # The handler will send a single WHO request after processing NAMES
+            time.sleep(0.5)  # Small delay to prevent flood
 
     def _schedule_next_response(self, channel):
         """Schedule the next response time for a channel."""

@@ -15,30 +15,47 @@ class BootCommand(Command):
 
     def execute(self, nick, channel, args):
         """Execute the boot command."""
-        # Check permissions
-        if not self.bot.permissions.has_permission('boot', nick, 
-            self.bot.users.get(nick, {}), 
-            self.bot.channel_users.get(channel, {}).get(nick, {}),
-            channel):
-            return "Nice try, but you don't have the power to boot anyone!"
-            
-        # Get list of recently active users in the channel
-        recent_users = self.bot.ai_client.get_recent_users(channel)
+        # Get list of recently active users from chat history
+        channel_lower = channel.lower()
+        recent_users = self.bot.ai_client.get_recent_users(channel_lower)
         channel_users = self.bot.channel_users.get(channel, {})
         
-        # Filter possible targets to only include non-protected users who are still in the channel
-        possible_targets = [
-            user for user in recent_users
-            if user in channel_users  # User is still in channel
-            and not self.bot.is_protected_user(channel, user)  # Not protected (bot, op, or admin)
-            and user != nick  # Not the command issuer
-        ]
+        self.bot.logger.debug(f"Recent users in {channel}: {recent_users}")
+        self.bot.logger.debug(f"Channel users in {channel}: {list(channel_users.keys())}")
+        
+        # Filter possible targets to only include recent users who are still in channel and not protected
+        possible_targets = []
+        for user in recent_users:
+            if user not in channel_users:  # Skip if not in channel
+                self.bot.logger.debug(f"Skipping {user} - not in channel")
+                continue
+                
+            if channel_users[user].get('op', False):  # Skip if opped
+                self.bot.logger.debug(f"Skipping {user} - is opped")
+                continue
+                
+            if user.lower() == self.bot.current_nick.lower():  # Skip if bot
+                self.bot.logger.debug(f"Skipping {user} - is bot")
+                continue
+                
+            if user == nick:  # Skip if command issuer
+                self.bot.logger.debug(f"Skipping {user} - is command issuer")
+                continue
+                
+            if self.bot.is_protected_user(channel, user):  # Skip if admin
+                self.bot.logger.debug(f"Skipping {user} - is admin/protected")
+                continue
+                
+            possible_targets.append(user)
+        
+        self.bot.logger.debug(f"Possible targets after filtering in {channel}: {possible_targets}")
         
         if not possible_targets:
-            return "No suitable targets found. Everyone's either too powerful or too quiet!"
+            return "No suitable targets found. Everyone's either too powerful or hasn't spoken recently!"
             
         # Pick a random target
         target = random.choice(possible_targets)
+        self.bot.logger.debug(f"Selected target in {channel}: {target}")
         
         # Get an AI-generated kick reason
         prompt = self.bot.get_channel_config(channel, 'ai_prompt_kick', self.bot.config['ai_prompt_kick'])
@@ -48,7 +65,7 @@ class BootCommand(Command):
             # Format the kick reason to remove encapsulating quotes
             formatted_reason = self.bot.format_message(reason)
             self.bot.send_raw(f"KICK {channel} {target} :{formatted_reason}")
-            return None
         else:
             self.bot.send_raw(f"KICK {channel} {target} :Random boot activated!")
-            return None 
+            
+        return None  # No response needed since we're sending the KICK directly 

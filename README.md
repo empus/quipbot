@@ -15,6 +15,7 @@ An intelligent, sarcastic IRC bot powered by OpenAI-compatible APIs that brings 
 - Supports multiple AI providers (OpenAI, Perplexity, Grok)
 - Selective chat history context for different interaction types
 - Configurable random response delays
+- Sleep and wake commands to create quiet times
 
 ### Channel Management
 - Auto-joins configured channels after server registration

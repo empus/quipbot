@@ -55,21 +55,51 @@ class AIClient:
             base_url=API_URLS[service]
         )
 
-    def get_response(self, user_message, nick, channel=None, add_to_history=True, include_history=True):
-        """Generate a response using the AI service.
+    def _get_nicklist_context(self, channel):
+        """Get nicklist context if enabled for the channel."""
+        if not self._get_channel_config(channel, 'ai_nicklist', False):
+            logger.debug(f"Nicklist disabled for channel {channel}")
+            return ""
+            
+        if not hasattr(self, 'bot') or not self.bot:
+            logger.warning("Bot reference not set in AI client")
+            return ""
+            
+        channel_users = self.bot.channel_users.get(channel, {})
+        if not channel_users:
+            logger.debug(f"No users found in channel {channel}")
+            return ""
+            
+        nicklist = sorted(channel_users.keys())  # Sort for consistent output
+        nicklist_context = f"\nThis channel {channel} has users: {', '.join(nicklist)}"
+        logger.debug(f"Generated nicklist context: {nicklist_context}")
+        return nicklist_context
+
+    def _get_prompt_with_nicklist(self, prompt_key, prompt_default, channel):
+        """Get channel-specific prompt with nicklist context if enabled."""
+        # Get base prompt
+        prompt = self._get_channel_config(channel, prompt_key, prompt_default)
         
-        Args:
-            user_message: The message to respond to
-            nick: The nickname of the user who sent the message
-            channel: Optional channel name for channel-specific config
-            add_to_history: Whether to add this message to history
-            include_history: Whether to include chat history in the context
-        """
+        # Add nicklist context if enabled
+        nicklist_context = self._get_nicklist_context(channel)
+        if nicklist_context:
+            # If prompt ends with a newline, append directly, otherwise add a newline first
+            if prompt.endswith('\n'):
+                prompt += nicklist_context
+            else:
+                prompt += '\n' + nicklist_context
+                
+        return prompt
+
+    def get_response(self, user_message, nick, channel=None, add_to_history=True, include_history=True):
+        """Generate a response using the AI service."""
         try:
             # Get channel-specific configuration
             client = self._get_client_for_channel(channel)
             model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
-            prompt = self._get_channel_config(channel, 'ai_prompt_default', self.config['ai_prompt_default'])
+            
+            # Get prompt with nicklist context
+            prompt = self._get_prompt_with_nicklist('ai_prompt_default', self.config['ai_prompt_default'], channel)
             
             # Build context with or without history
             if include_history:
@@ -99,13 +129,17 @@ class AIClient:
                     "Quip:"
                 )
 
+            # Log the full API request payload
+            api_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": context}],
+                "max_tokens": 150,
+                "temperature": 0.8,
+            }
+            logger.debug(f"API request payload for {channel}: {api_payload}")
+            
             logger.debug(f"Sending API request to {client.base_url} for channel {channel}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": context}],
-                max_tokens=150,
-                temperature=0.8,
-            )
+            response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"API error for channel {channel}: {str(e)}", exc_info=True)
@@ -161,16 +195,21 @@ class AIClient:
         try:
             client = self._get_client_for_channel(channel)
             model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
-            # Use channel-specific topic prompt if available
-            prompt = self._get_channel_config(channel, 'ai_prompt_topic', prompt)
+            
+            # Get prompt with nicklist context
+            prompt = self._get_prompt_with_nicklist('ai_prompt_topic', prompt, channel)
+            
+            # Log the full API request payload
+            api_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 50,
+                "temperature": 0.9,
+            }
+            logger.debug(f"Topic API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending topic generation request to {client.base_url} for channel {channel}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0.9,
-            )
+            response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"API error generating topic for channel {channel}: {str(e)}", exc_info=True)
@@ -185,16 +224,21 @@ class AIClient:
                 
             client = self._get_client_for_channel(channel)
             model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
-            # Use channel-specific entrance prompt if available
-            prompt = self._get_channel_config(channel, 'ai_prompt_entrance', prompt)
+            
+            # Get prompt with nicklist context
+            prompt = self._get_prompt_with_nicklist('ai_prompt_entrance', prompt, channel)
+            
+            # Log the full API request payload
+            api_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 50,
+                "temperature": 0.9,
+            }
+            logger.debug(f"Entrance API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending entrance message request to {client.base_url} for channel {channel}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0.9,
-            )
+            response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"API error generating entrance for channel {channel}: {str(e)}", exc_info=True)
@@ -205,16 +249,21 @@ class AIClient:
         try:
             client = self._get_client_for_channel(channel)
             model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
-            # Use channel-specific kick prompt if available
-            prompt = self._get_channel_config(channel, 'ai_prompt_kick', prompt)
+            
+            # Get prompt with nicklist context
+            prompt = self._get_prompt_with_nicklist('ai_prompt_kick', prompt, channel)
+            
+            # Log the full API request payload
+            api_payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 50,
+                "temperature": 0.9,
+            }
+            logger.debug(f"Kick API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending kick reason request to {client.base_url} for channel {channel}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0.9,
-            )
+            response = client.chat.completions.create(**api_payload)
             
             # Get the response and ensure it's not None
             reason = response.choices[0].message.content.strip() if response.choices else None

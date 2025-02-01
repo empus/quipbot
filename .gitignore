@@ -4,6 +4,7 @@
 # Config file
 config.yaml
 config2.yaml
+config3.yaml
 
 # Log files
 *.log
