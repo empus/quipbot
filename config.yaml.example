@@ -209,7 +209,11 @@ ai_prompt_kick: |
 
 # How often (in seconds) to post a random chat message if the channel is idle
 # Set to 0 or comment out to disable random chat messages.
-idle_chat_interval: 60  # 60 secs
+idle_chat_interval: 3600  # 1 hour
+
+# How long (in seconds) the channel must be idle before the bot will post a random chat message
+# If not set, defaults to idle_chat_interval. Can be overridden per channel.
+idle_chat_time: 900  # 15 minutes
 
 # How often (in seconds) to perform random actions (kicks, topic changes). 
 # Set to 0 or comment out to disable random actions.

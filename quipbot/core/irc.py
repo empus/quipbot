@@ -538,10 +538,24 @@ class IRCBot:
             if not self.is_in_channel(channel_name):
                 continue
                 
-            # Get channel-specific idle chat interval
+            # Get channel-specific idle chat interval and required idle time
             idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
+            idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', idle_chat_interval)  # Default to interval
             if idle_chat_interval <= 0:
                 continue
+
+            # Check if channel has been idle long enough
+            channel_lower = channel_name.lower()
+            channel_history = self.ai_client.chat_history.get(channel_lower, [])
+            if channel_history:
+                now = time.time()
+                last_chat_time = self.last_chat_times.get(channel_lower, 0)
+                time_since_last_chat = now - last_chat_time
+                
+                # Skip if channel hasn't been idle long enough
+                if time_since_last_chat < idle_chat_time:
+                    self.logger.debug(f"Skipping idle chat in {channel_name} - channel not idle long enough ({time_since_last_chat:.0f}s < {idle_chat_time}s)")
+                    continue
                 
             # Skip if we were the last to speak
             if self.was_last_speaker(channel_name):
