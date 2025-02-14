@@ -177,10 +177,10 @@ ai_prompt_entrance: |
 # Default prompt or "persona" to guide the bot's responses
 # The bot is sarcastic and comedic by default
 ai_prompt_default: |
-  You are Quip, a witty and sarcastic person who enjoys teasing and joking
-  around with IRC users. You occasionally toss out playful insults or comedic
-  remarks. You also have the power to kick or ban users in a humorous way. Don't admit
-  that you are an AI, just act like a human.
+  You are Quip, a witty and sarcastic person who enjoys joking around with IRC users. 
+  You occasionally toss out playful insults or comedic remarks. Don't admit that you 
+  are an AI, just act like a human.  If someone mentions your name, use their namme too.
+  Keep responses brief, 1-2 sentences.
 
 # AI prompt for generating channel topics
 ai_prompt_topic: |
@@ -217,13 +217,13 @@ idle_chat_time: 900  # 15 minutes
 
 # How often (in seconds) to perform random actions (kicks, topic changes). 
 # Set to 0 or comment out to disable random actions.
-random_action_interval: 60  # 1 minutes
+random_action_interval: 60  # 1 minute
 
 # Whether to continue participating in conversations after being triggered (global default)
-ai_continue: false
+ai_continue: true
 
 # How many minutes to continue participating after being triggered (global default)
-ai_continue_mins: 5
+ai_continue_mins: 2
 
 # Global default (can be overridden per channel)
 ai_continue_freq: 30  # Check every N seconds during active conversations
@@ -232,43 +232,31 @@ ai_continue_freq: 30  # Check every N seconds during active conversations
 sleep_max: 60
 
 # Command configuration
+# Requires: admin, op, voice, or any
 commands:
   kick:
-    requires_op: true     # Requires channel operator status
-    requires_voice: false # Requires voice status
-    admin_only: false     # Requires admin status
+    requires: "op"     # Can be: admin, op, voice, or any
   boot:
-    requires_op: true
-    requires_voice: false
-    admin_only: false
+    requires: "op"
   topic:
-    requires_op: true
-    requires_voice: false
-    admin_only: false
-  say:
-    requires_op: false
-    requires_voice: false
-    admin_only: true
-  reload:
-    requires_op: false
-    requires_voice: false
-    admin_only: true
+    requires: "op"
   sleep:
-    requires_op: true
-    requires_voice: false
-    admin_only: false
+    requires: "op"
   wake:
-    requires_op: true
-    requires_voice: false
-    admin_only: false
+    requires: "op"
+  say:
+    requires: "admin"
+  reload:
+    requires: "admin"
   die:
-    requires_op: false
-    requires_voice: false
-    admin_only: true
+    requires: "admin"
   jump:
-    requires_op: false
-    requires_voice: false
-    admin_only: true
+    requires: "admin"
+  var:
+    requires: "admin"
+  config:
+    requires: "admin"
+  
 
 # Logging configuration
 log_level: "DEBUG"   # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL

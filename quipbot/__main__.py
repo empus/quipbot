@@ -110,7 +110,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     
     # Create and run the bot
-    bot = IRCBot(config)
+    bot = IRCBot(config, config_file=args.config)
     bot.run()
 
 if __name__ == '__main__':

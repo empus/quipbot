@@ -16,9 +16,10 @@ import yaml
 import re
 
 class IRCBot:
-    def __init__(self, config):
+    def __init__(self, config, config_file='config.yaml'):
         """Initialize IRC bot."""
         self.config = config
+        self.config_file = config_file  # Store the config file path
         self.nick = config['nick']
         self.altnick = config.get('altnick', f"{self.nick}_")  # Default to nick_ if not specified
         self.current_nick = self.nick  # Track current nickname
@@ -312,8 +313,14 @@ class IRCBot:
         self.conversation_timers[channel.lower()] = time.time() + continue_freq
         self.logger.debug(f"Scheduled next response for {channel} in {continue_freq}s")
 
-    def send_channel_message(self, channel, message):
-        """Send a message to a channel."""
+    def send_channel_message(self, channel, message, add_to_history=True):
+        """Send a message to a channel.
+        
+        Args:
+            channel: The channel to send the message to
+            message: The message to send
+            add_to_history: Whether to add this message to chat history (default: True)
+        """
         formatted_message = self.format_message(message)
         
         # Calculate max message length (512 - overhead)
@@ -348,13 +355,14 @@ class IRCBot:
                 
             try:
                 self.send_raw(f"PRIVMSG {channel} :{chunk}")
-                # Add our own message to the channel history
-                history_entry = f"{self.current_nick}: {chunk}"
-                # Use lowercase channel name for consistency
-                channel_lower = channel.lower()
-                self.ai_client.add_to_history(history_entry, channel_lower)
+                # Add our own message to the channel history only if requested
+                if add_to_history:
+                    history_entry = f"{self.current_nick}: {chunk}"
+                    # Use lowercase channel name for consistency
+                    channel_lower = channel.lower()
+                    self.ai_client.add_to_history(history_entry, channel_lower)
                 # Update last bot time since we spoke
-                self.last_bot_times[channel_lower] = time.time()
+                self.last_bot_times[channel.lower()] = time.time()
                 # Schedule next response time
                 if self._should_continue_conversation(channel):
                     self._schedule_next_response(channel)
@@ -399,14 +407,14 @@ class IRCBot:
         while True:
             try:
                 now = time.time()
-                next_check = now + 5  # Default to 5 seconds between checks
+                next_check = now + 60  # Default to 60 seconds between checks
                 
                 # Process each channel independently
                 for channel in self.channels:
                     channel_name = channel['name']
                     channel_lower = channel_name.lower()
                     
-                    # Skip if we're not in the channel
+                    # Skip if we're not in the channel - let the handler's check_channels_loop handle this
                     if not self.is_in_channel(channel_name):
                         continue
 
@@ -451,9 +459,9 @@ class IRCBot:
                         next_check = min(next_check, now + max(0.1, time_until_response))
                         continue
                     else:
-                        # Conversation ended or not active, clean up timers
+                        # Conversation ended or not active, only clear conversation timers
                         if channel_lower in self.conversation_timers:
-                            self.logger.debug(f"Conversation ended in {channel_name}, clearing timers")
+                            self.logger.debug(f"Conversation ended in {channel_name}, clearing conversation timers")
                             del self.conversation_timers[channel_lower]
                     
                     # Handle idle chat and random actions for non-active conversations
@@ -461,19 +469,35 @@ class IRCBot:
                         self.last_chat_times[channel_name] = now
                     if channel_name not in self.last_action_times:
                         self.last_action_times[channel_name] = now
+                    if channel_name not in self.last_check_times:
+                        self.last_check_times[channel_name] = now
                     
                     # Check idle chat interval
                     idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
                     if idle_chat_interval > 0:
-                        time_until_chat = (self.last_chat_times[channel_name] + idle_chat_interval) - now
-                        if time_until_chat <= 0:
-                            # Skip idle chat if we were the last to speak
-                            if not self.was_last_speaker(channel_name):
-                                self.logger.debug(f"Attempting idle chat in {channel_name}")
-                                self._random_chat(channel_name)
-                                self.last_chat_times[channel_name] = now
-                        else:
-                            next_check = min(next_check, now + time_until_chat)
+                        # Get required idle time before chatting
+                        idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', idle_chat_interval)
+                        
+                        # Calculate time since last check and last chat
+                        time_since_last_check = now - self.last_check_times[channel_name]
+                        time_since_last_chat = now - self.last_chat_times[channel_name]
+                        
+                        # Only check if we've waited the interval
+                        if time_since_last_check >= idle_chat_interval:
+                            if time_since_last_chat >= idle_chat_time:
+                                # Skip idle chat if we were the last to speak
+                                if not self.was_last_speaker(channel_name):
+                                    self.logger.debug(f"Attempting idle chat in {channel_name} - Channel idle for {time_since_last_chat:.1f}s")
+                                    self._random_chat(channel_name)
+                                else:
+                                    self.logger.debug(f"Skipping idle chat in {channel_name} - bot was last speaker")
+                            else:
+                                self.logger.debug(f"Skipping idle chat in {channel_name} - channel not idle long enough (idle for {time_since_last_chat:.1f}s, need {idle_chat_time}s)")
+                            self.last_check_times[channel_name] = now
+                            
+                        # Schedule next check based on interval
+                        time_until_next_check = idle_chat_interval - time_since_last_check
+                        next_check = min(next_check, now + time_until_next_check)
                     
                     # Check random action interval
                     random_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
@@ -691,14 +715,13 @@ class IRCBot:
     def reload_config(self):
         """Reload configuration from file."""
         try:
-            with open('config.yaml', 'r') as f:
+            with open(self.config_file, 'r') as f:
                 new_config = yaml.safe_load(f)
-            self.config = new_config
-            self.ai_client.model = new_config['ai_model']
-            self.ai_client.default_prompt = new_config['ai_prompt_default']
+            self.update_config(new_config)
+            self.logger.info(f"Successfully reloaded config from {self.config_file}")
             return True
         except Exception as e:
-            self.logger.error(f"Error reloading config: {e}")
+            self.logger.error(f"Error reloading config from {self.config_file}: {e}")
             return False
 
     def _should_continue_conversation(self, channel):
@@ -775,14 +798,6 @@ class IRCBot:
                 self.send_raw(cmd)
             return
 
-        # Add message to history
-        history_entry = f"{nick}: {message}"
-        self.ai_client.add_to_history(history_entry, channel_lower)
-
-        # Update last chat time for any user's message (except our own)
-        if nick.lower() != self.current_nick.lower():
-            self.last_chat_times[channel_lower] = time.time()
-
         # Check for commands first
         cmd_prefix = self.config.get('cmd_prefix', '!')  # Default to ! if not configured
         if message.startswith(cmd_prefix):
@@ -793,6 +808,14 @@ class IRCBot:
                 self.logger.debug(f"Command detected: {command} from {nick} in {channel}")
                 self.handler._handle_command(command, nick, channel, args)
                 return
+
+        # Add message to history (only if not a command)
+        history_entry = f"{nick}: {message}"
+        self.ai_client.add_to_history(history_entry, channel_lower)
+
+        # Update last chat time for any user's message (except our own)
+        if nick.lower() != self.current_nick.lower():
+            self.last_chat_times[channel_lower] = time.time()
 
         # If sleeping and not a command, don't process AI responses
         if self.is_sleeping(channel):
@@ -1059,3 +1082,63 @@ class IRCBot:
             self.send_channel_message(channel, "I'm awake! Ready to chat again.")
         else:
             self.send_channel_message(channel, "I wasn't sleeping!")
+
+    def handle_mode(self, nick, userhost, params):
+        """Handle MODE command."""
+        parts = params.split()
+        if len(parts) < 2:
+            return
+            
+        channel = parts[0]
+        if channel not in self.channel_users:
+            return
+
+        modes = parts[1]
+        mode_params = parts[2:]
+        adding = True
+        param_index = 0
+        
+        # Track which modes require parameters
+        param_modes = 'ovbkl'  # Common IRC modes that require parameters
+        
+        # Process each mode character
+        for mode in modes:
+            if mode == '+':
+                adding = True
+                continue
+            elif mode == '-':
+                adding = False
+                continue
+                
+            # If this mode requires a parameter and we have parameters left
+            if mode in param_modes and param_index < len(mode_params):
+                target = mode_params[param_index]
+                
+                # Handle user modes (op and voice)
+                if mode in 'ov' and target in self.channel_users[channel]:
+                    old_status = self.channel_users[channel][target].copy()
+                    
+                    if mode == 'o':
+                        self.channel_users[channel][target]['op'] = adding
+                        status = "opped" if adding else "de-opped"
+                        self.logger.info(f"User {target} was {status} in {channel} by {nick}")
+                    elif mode == 'v':
+                        self.channel_users[channel][target]['voice'] = adding
+                        status = "voiced" if adding else "de-voiced"
+                        self.logger.info(f"User {target} was {status} in {channel} by {nick}")
+                        
+                    # Log the full mode change details
+                    mode_char = '+' if adding else '-'
+                    self.logger.debug(
+                        f"Mode change in {channel} by {nick}: {mode_char}{mode} {target} "
+                        f"(op: {old_status['op']}->{self.channel_users[channel][target]['op']}, "
+                        f"voice: {old_status['voice']}->{self.channel_users[channel][target]['voice']})"
+                    )
+                
+                param_index += 1
+            
+            # Handle modes that don't require parameters
+            elif mode not in param_modes:
+                # Just log channel modes that don't affect user status
+                mode_char = '+' if adding else '-'
+                self.logger.debug(f"Channel mode change in {channel} by {nick}: {mode_char}{mode}")

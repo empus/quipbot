@@ -53,67 +53,81 @@ class PermissionManager:
             
         return global_cmd_config
 
-    def has_permission(self, command, nick, user_info, channel_info, channel=None):
+    def is_admin(self, nick, userhost):
+        """Check if a user is a bot administrator.
+        
+        Args:
+            nick: The nickname to check
+            userhost: The user@host to check
+            
+        Returns:
+            bool: True if user is an admin, False otherwise
+        """
+        if not userhost:
+            return False
+            
+        # Get admin list from config
+        admins = self.config.get('admins', [])
+        
+        # Check each admin pattern
+        for pattern in admins:
+            # If pattern contains @ it's a userhost pattern
+            if '@' in pattern:
+                if self._match_userhost(userhost, pattern):
+                    return True
+            # Otherwise it's a nickname pattern
+            else:
+                if nick.lower() == pattern.lower():
+                    return True
+                    
+        return False
+        
+    def _match_userhost(self, userhost, pattern):
+        """Match a userhost against a pattern.
+        
+        Args:
+            userhost: The user@host to check
+            pattern: The pattern to match against
+            
+        Returns:
+            bool: True if userhost matches pattern, False otherwise
+        """
+        # Convert pattern to regex
+        import re
+        pattern = pattern.replace('.', '\\.').replace('*', '.*')
+        return bool(re.match(pattern, userhost, re.IGNORECASE))
+        
+    def check_command_permission(self, command, nick, userhost, channel_info):
         """Check if a user has permission to use a command.
         
         Args:
             command: The command name
-            nick: User's nickname
-            user_info: Dict containing user information
-            channel_info: Dict containing user's channel status
-            channel: Channel name for channel-specific permissions
+            nick: The user's nickname
+            userhost: The user's userhost
+            channel_info: The user's channel info dict
             
         Returns:
             bool: True if user has permission, False otherwise
         """
-        # Get command config with channel overrides
-        cmd_config = self._get_command_config(command, channel)
+        # Get command config
+        cmd_config = self.config.get('commands', {}).get(command, {})
         
-        # Check if user is admin (either by nick or hostmask)
-        host = user_info.get('host', '')
-        if self.is_admin(nick, host):
-            self.logger.debug(f"User {nick} ({host}) is admin - command {command} allowed")
+        # Check if user is admin first
+        if self.is_admin(nick, userhost):
             return True
             
-        # Check admin_only restriction
-        if cmd_config.get('admin_only', False):
+        # Get required permission level
+        required = cmd_config.get('requires', 'any').lower()
+        
+        # Handle different permission levels
+        if required == 'admin':
             return False
             
-        # Check op requirement
-        if cmd_config.get('requires_op', False) and not channel_info.get('op', False):
-            return False
+        elif required == 'op':
+            return channel_info.get('op', False)
             
-        # Check voice requirement
-        if cmd_config.get('requires_voice', False) and not channel_info.get('voice', False):
-            return False
+        elif required == 'voice':
+            return channel_info.get('voice', False) or channel_info.get('op', False)
             
-        return True
-
-    def is_admin(self, nick, host):
-        """Check if a user is an admin based on nick!user@host or account."""
-        # First check exact nick matches in admin list
-        if nick in self.config.get('admins', []):
-            self.logger.debug(f"Admin match: exact nick {nick}")
-            return True
-            
-        # Then check hostmask patterns
-        if '@' in host:  # If we have a full hostmask
-            user_mask = host  # Use the full hostmask as is
-        else:
-            user_mask = f"{nick}!{host}"  # Construct it from nick and host
-            
-        self.logger.debug(f"Checking admin match for: {user_mask}")
-            
-        for pattern in self.config.get('admins', []):
-            # Skip patterns that look like exact nicks
-            if not any(c in pattern for c in '*!@?'):
-                continue
-                
-            try:
-                if fnmatch.fnmatch(user_mask.lower(), pattern.lower()):
-                    self.logger.debug(f"Admin match: hostmask {pattern} matches {user_mask}")
-                    return True
-            except Exception as e:
-                self.logger.error(f"Error matching hostmask pattern {pattern}: {e}")
-                
-        return False 
+        # 'any' permission level always returns True
+        return True 

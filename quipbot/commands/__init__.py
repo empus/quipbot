@@ -31,6 +31,7 @@ class Command(ABC):
 
 # Import all commands
 from .boot import BootCommand
+from .config import ConfigCommand
 from .help import HelpCommand
 from .kick import KickCommand
 from .reload import ReloadCommand
@@ -40,11 +41,13 @@ from .topic import TopicCommand
 from .wake import WakeCommand
 from .die import DieCommand
 from .jump import JumpCommand
+from .var import VarCommand
 
 # Export all commands
 __all__ = [
     'Command',
     'BootCommand',
+    'ConfigCommand',
     'HelpCommand',
     'KickCommand',
     'ReloadCommand',
@@ -54,4 +57,5 @@ __all__ = [
     'WakeCommand',
     'DieCommand',
     'JumpCommand',
+    'VarCommand',
 ] 

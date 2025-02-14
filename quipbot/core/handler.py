@@ -7,6 +7,7 @@ import pkgutil
 import importlib
 from .. import commands
 import time
+import threading
 
 class MessageHandler:
     def __init__(self, bot):
@@ -15,6 +16,11 @@ class MessageHandler:
         self.logger = self.bot.logger
         self.commands = {}
         self._load_commands()
+        
+        # Start channel check thread
+        self.channel_check_thread = threading.Thread(target=self._check_channels_loop, daemon=True)
+        self.channel_check_thread.start()
+        self.logger.debug("Started channel check thread")
 
     def _load_commands(self):
         """Load all command modules."""
@@ -371,20 +377,22 @@ class MessageHandler:
         invited_channel = parts[1].lstrip(':')
         
         # Only accept invites meant for us
-        if target_nick.lower() != self.bot.nick.lower():
+        if target_nick.lower() != self.bot.current_nick.lower():
             return
             
-        # Check if this is a configured channel we're not in
-        configured_channels = [chan['name'].lower() for chan in self.bot.channels]
-        if invited_channel.lower() in configured_channels:
-            if invited_channel not in self.bot.channel_users:
+        # Check if this is a configured channel
+        configured_channels = {c['name'].lower(): c.get('key', '') for c in self.bot.channels}
+        invited_channel_lower = invited_channel.lower()
+        
+        if invited_channel_lower in configured_channels:
+            if invited_channel_lower not in self.bot.channel_users:
                 self.logger.info(f"Accepting invite to configured channel {invited_channel} from {nick}")
-                # Find the channel config to get the key if any
-                for chan in self.bot.channels:
-                    if chan['name'].lower() == invited_channel.lower():
-                        key = chan.get('key', '')
-                        self.bot.send_raw(f"JOIN {invited_channel} {key}")
-                        break
+                key = configured_channels[invited_channel_lower]
+                self.bot.send_raw(f"JOIN {invited_channel} {key}")
+            else:
+                self.logger.debug(f"Ignoring invite to {invited_channel} - already in channel")
+        else:
+            self.logger.debug(f"Ignoring invite to {invited_channel} - not a configured channel")
 
     def handle_kick(self, nick, userhost, params):
         """Handle KICK command."""
@@ -422,30 +430,29 @@ class MessageHandler:
         # Get channel-specific user info
         channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
         
-        # Check if user is admin first - admins can use any command
-        is_admin = False
-        if user_info.get('host'):
-            is_admin = self.bot.permissions.is_admin(nick, user_info['host'])
-            if is_admin:
-                return True
+        # Get required permission level
+        required = cmd_config.get('requires', 'any').lower()
+        
+        # Check if user is admin (admins can use any command)
+        if user_info.get('host') and self.bot.permissions.is_admin(nick, user_info['host']):
+            return True
             
-        # Check admin_only flag
-        if cmd_config.get('admin_only', False):
-            self.bot.send_channel_message(channel, f"Sorry {nick}, that command is for admins only.")
+        # Handle different permission levels
+        if required == 'admin':
+            self.logger.info(f"Command denied: {nick} tried to use admin-only command in {channel}")
             return False
             
-        # For non-admins, check op requirement
-        if cmd_config.get('requires_op', False):
+        elif required == 'op':
             if not channel_info.get('op', False):
-                self.bot.send_channel_message(channel, f"Sorry {nick}, that command requires op status.")
+                self.logger.info(f"Command denied: {nick} tried to use op-required command in {channel} without op status")
                 return False
                 
-        # For non-admins, check voice requirement (ops can also use voice-required commands)
-        if cmd_config.get('requires_voice', False):
+        elif required == 'voice':
             if not (channel_info.get('voice', False) or channel_info.get('op', False)):
-                self.bot.send_channel_message(channel, f"Sorry {nick}, that command requires voice or op status.")
+                self.logger.info(f"Command denied: {nick} tried to use voice-required command in {channel} without voice/op status")
                 return False
                 
+        # 'any' permission level always returns True
         return True
 
     def _handle_command(self, command, nick, channel, args):
@@ -461,7 +468,13 @@ class MessageHandler:
         if command in self.commands:
             response = self.commands[command].execute(nick, channel, args)
             if response:
-                self.bot.send_channel_message(channel, response)
+                # Check if response is a tuple with add_to_history flag
+                if isinstance(response, tuple):
+                    message, add_to_history = response
+                    self.bot.send_channel_message(channel, message, add_to_history=add_to_history)
+                else:
+                    # For backward compatibility with commands that haven't been updated
+                    self.bot.send_channel_message(channel, response, add_to_history=False)
         else:
             self.bot.send_channel_message(channel, f"Unknown command: {command}")
 
@@ -470,4 +483,26 @@ class MessageHandler:
         if "!" in prefix and "@" in prefix:
             nick, userhost = prefix.split("!", 1)
             return nick, userhost
-        return prefix, "" 
+        return prefix, ""
+
+    def _check_channels_loop(self):
+        """Periodically check if we're in all configured channels."""
+        while True:
+            try:
+                # Only check if we're connected
+                if self.bot.connected:
+                    configured_channels = {c['name'].lower(): c.get('key', '') for c in self.bot.channels}
+                    current_channels = {chan.lower() for chan in self.bot.channel_users.keys()}
+                    
+                    # Find channels we should be in but aren't
+                    missing_channels = set(configured_channels.keys()) - current_channels
+                    
+                    for channel in missing_channels:
+                        self.logger.info(f"Not in configured channel {channel}, attempting to join")
+                        key = configured_channels[channel]
+                        self.bot.send_raw(f"JOIN {channel} {key}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error in channel check loop: {e}")
+                
+            time.sleep(30)  # Check every 30 seconds 
