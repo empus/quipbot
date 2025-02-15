@@ -14,6 +14,8 @@ class Command(ABC):
     def __init__(self, bot):
         """Initialize command with bot instance."""
         self.bot = bot
+        # Only set logger if bot is provided (not None)
+        self.logger = bot.logger if bot is not None else logging.getLogger('QuipBot')
 
     @abstractmethod
     def execute(self, nick, channel, args):
@@ -36,6 +38,17 @@ class Command(ABC):
     def usage(self):
         """Command usage text."""
         return self.name
+
+    def get_prefix(self, channel=None):
+        """Get channel-specific command prefix.
+        
+        Args:
+            channel: Optional channel name. If None, uses global default.
+            
+        Returns:
+            str: The command prefix for the channel
+        """
+        return self.bot.get_channel_config(channel, 'cmd_prefix', '!')
 
 def load_commands() -> Dict[str, Type[Command]]:
     """Dynamically load all command classes.
@@ -69,12 +82,12 @@ def load_commands() -> Dict[str, Type[Command]]:
                     obj.__module__ == module.__name__):  # Only get commands defined in this module
                     
                     try:
-                        # Create temporary instance to get command name
-                        cmd_instance = obj(None)
-                        cmd_name = cmd_instance.name
+                        # Get command name from class property without instantiating
+                        cmd_name = obj.name.fget(None)  # Call the property getter directly with None
                         commands[cmd_name] = obj
+                        logger.debug(f"Found command: {cmd_name}")
                     except Exception as e:
-                        logger.error(f"Error initializing command {name}: {e}", exc_info=True)
+                        logger.error(f"Error getting command name for {name}: {e}", exc_info=True)
                     
         except Exception as e:
             logger.error(f"Error loading command module {file.name}: {e}", exc_info=True)

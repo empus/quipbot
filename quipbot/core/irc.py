@@ -252,7 +252,7 @@ class IRCBot:
                 # Set user mode if configured
                 usermode = self.config.get('usermode')
                 if usermode:
-                    self.logger.debug(f"Setting user mode: {usermode}")
+                    self.logger.info(f"Setting user mode: {usermode}")
                     self.send_raw(f"MODE {self.current_nick} {usermode}")
         elif numeric in ("376", "422"):  # End of MOTD/MOTD Missing - End of registration
             if self.registration_complete:
@@ -807,13 +807,25 @@ class IRCBot:
         # Use lowercase channel name for consistency
         channel_lower = channel.lower()
         
-        # Get ignore lists using get_channel_config for consistency
-        global_ignores = [n.lower() for n in self.config.get('ignore_nicks', [])]
-        channel_ignores = [n.lower() for n in self.get_channel_config(channel, 'ignore_nicks', [])]
+        # Get global ignores
+        global_ignores = [n.lower() for n in self.get_channel_config(channel, 'ignore_nicks', [])]
+        
+        # Get channel-specific ignores
+        channel_config = None
+        for c in self.channels:
+            if isinstance(c, dict) and c.get('name', '').lower() == channel.lower():
+                channel_config = c
+                break
+        
+        channel_ignores = [n.lower() for n in channel_config.get('ignore_nicks', [])] if channel_config else []
+        
+        # Combine ignore lists
         ignore_list = list(set(global_ignores + channel_ignores))  # Deduplicate combined list
         
+        # Get global regex ignores
+        global_regex = self.get_channel_config(channel, 'ignore_regex', [])
+        
         # Get regex ignore patterns
-        global_regex = self.config.get('ignore_regex', [])
         channel_regex = self.get_channel_config(channel, 'ignore_regex', [])
         regex_patterns = list(set(global_regex + channel_regex))  # Deduplicate combined list
         
@@ -843,7 +855,7 @@ class IRCBot:
             return
 
         # Check for commands first
-        cmd_prefix = self.config.get('cmd_prefix', '!')  # Default to ! if not configured
+        cmd_prefix = self.get_channel_config(channel, 'cmd_prefix', '!')  # Default to ! if not configured
         if message.startswith(cmd_prefix):
             parts = message[len(cmd_prefix):].split()
             if parts:
@@ -891,7 +903,7 @@ class IRCBot:
             
             # Check if we should include chat history context
             include_history = self.get_channel_config(channel, 'ai_context_direct', False)
-            self.logger.debug(f"Direct message in {channel} - using {'context' if include_history else 'no context'}")
+            self.logger.info(f"Direct message in {channel} - using {'context' if include_history else 'no context'}")
             
             response = self.ai_client.get_response(
                 message, 
@@ -920,7 +932,7 @@ class IRCBot:
                 # Mentions also get a response and update trigger time
                 self._update_trigger_time(channel_lower)
                 
-                self.logger.debug(f"Bot mentioned by {nick} in {channel}")
+                self.logger.info(f"Bot mentioned by {nick} in {channel}")
                 # Check if we should include chat history context
                 include_history = self.get_channel_config(channel, 'ai_context_mention', True)
                 response = self.ai_client.get_response(
@@ -1091,7 +1103,7 @@ class IRCBot:
     def handle_sleep_command(self, nick, channel, args):
         """Handle the sleep command."""
         if not args:
-            self.send_channel_message(channel, f"Usage: {self.config['cmd_prefix']}sleep <minutes>")
+            self.send_channel_message(channel, f"{self.get_channel_config(channel, 'cmd_prefix', '!')}sleep <minutes>")
             return
 
         try:
@@ -1110,7 +1122,7 @@ class IRCBot:
             channel_lower = channel.lower()
             self.sleep_until[channel_lower] = time.time() + (minutes * 60)
             self.logger.info(f"Bot put to sleep in {channel} for {minutes} minutes by {nick}")
-            self.send_channel_message(channel, f"Going to sleep for {minutes} minutes. Wake me with {self.config['cmd_prefix']}wake")
+            self.send_channel_message(channel, f"Going to sleep for {minutes} minutes. Wake me with {self.get_channel_config(channel, 'cmd_prefix', '!')}wake")
 
         except ValueError:
             self.send_channel_message(channel, "Sleep time must be a number")

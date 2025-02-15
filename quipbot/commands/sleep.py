@@ -14,12 +14,13 @@ class SleepCommand(Command):
     @property
     def name(self):
         """Command name."""
-        return self._name
+        return "sleep"
         
     @property
     def help(self):
         """Command help text."""
-        return self._help
+        prefix = self.get_prefix()
+        return f"Make the bot sleep for a specified time. Usage: {prefix}sleep <minutes>"
         
     @property
     def usage(self):
@@ -29,7 +30,8 @@ class SleepCommand(Command):
     def execute(self, nick, channel, args):
         """Execute the sleep command."""
         if not args:
-            return f"Usage: {self.bot.config['cmd_prefix']}{self.usage}"
+            prefix = self.get_prefix(channel)
+            return f"Usage: {prefix}sleep <minutes>"
 
         try:
             minutes = int(args[0])
@@ -44,8 +46,9 @@ class SleepCommand(Command):
 
             channel_lower = channel.lower()
             self.bot.sleep_until[channel_lower] = time.time() + (minutes * 60)
-            self.bot.logger.info(f"Bot put to sleep in {channel} for {minutes} minutes by {nick}")
-            return f"Going to sleep for {minutes} minutes. Wake me with {self.bot.config['cmd_prefix']}wake"
+            self.logger.info(f"Bot put to sleep in {channel} for {minutes} minutes by {nick}")
+            prefix = self.get_prefix(channel)
+            return f"Going to sleep for {minutes} minutes. Wake me with {prefix}wake"
 
         except ValueError:
             return "Sleep time must be a number" 

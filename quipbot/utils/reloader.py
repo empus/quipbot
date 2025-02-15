@@ -592,22 +592,16 @@ class ModuleReloader:
                     # Reload all modules in order
                     for module_name in all_modules:
                         try:
-                            # Skip if already reloaded through dependency
                             if module_name in reloaded:
                                 continue
-                                
-                            # Reload module and its dependencies
                             module = importlib.import_module(module_name)
                             reloaded[module_name] = importlib.reload(module)
                             self.logger.debug(f"Reloaded module: {module_name}")
-                            
-                            # Reload dependencies if not already reloaded
                             for dep in dependencies[module_name]:
                                 if dep not in reloaded and dep in self._original_modules['sys'].modules:
                                     dep_module = importlib.import_module(dep)
                                     reloaded[dep] = importlib.reload(dep_module)
                                     self.logger.debug(f"Reloaded dependency: {dep}")
-                                    
                         except Exception as e:
                             self.logger.error(f"Error reloading module {module_name}: {e}", exc_info=True)
                             raise

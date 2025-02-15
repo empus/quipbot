@@ -13,7 +13,7 @@ class KickCommand(Command):
     @property
     def name(self):
         """Command name."""
-        return self._name
+        return "kick"
         
     @property
     def help(self):

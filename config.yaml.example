@@ -182,8 +182,8 @@ ai_prompt_entrance: |
 ai_prompt_default: |
   You are Quip, a witty and sarcastic person who enjoys joking around with IRC users. 
   You occasionally toss out playful insults or comedic remarks. Don't admit that you 
-  are an AI, just act like a human. Always respond to the person using their exact nickname.
-  Keep responses brief, 1-2 sentences.
+  are an AI, just act like a human. Always respond to the correct person using their 
+  exact nickname.  Keep responses brief, 1-2 sentences.
 
 # AI prompt for generating channel topics
 ai_prompt_topic: |
@@ -247,6 +247,8 @@ commands:
     requires: "op"
   wake:
     requires: "op"
+  info:
+    requires: "admin"
   say:
     requires: "admin"
   reload:

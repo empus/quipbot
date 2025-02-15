@@ -202,7 +202,7 @@ class MessageHandler:
             # handle_366 (end of NAMES) will trigger the WHO request
             
             # Generate and send entrance message if enabled
-            if self.bot.config.get('ai_entrance', False):
+            if self.bot.get_channel_config(channel, 'ai_entrance', False):
                 self.logger.debug(f"Generating entrance message for {channel}")
                 entrance_prompt = self.bot.get_channel_config(channel, 'ai_prompt_entrance', 'Generate a channel entrance message')
                 entrance_msg = self.bot.ai_client.get_response(

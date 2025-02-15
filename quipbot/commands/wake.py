@@ -13,7 +13,7 @@ class WakeCommand(Command):
     @property
     def name(self):
         """Command name."""
-        return self._name
+        return "wake"
         
     @property
     def help(self):

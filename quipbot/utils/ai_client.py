@@ -63,7 +63,7 @@ class AIClient:
 
     def _get_nicklist_context(self, channel):
         """Get channel nicklist context for AI prompts."""
-        if not self.config.get('ai_nicklist', True):
+        if not self.bot.get_channel_config(channel, 'ai_nicklist', True):
             return ""
             
         channel_users = self.bot.channel_users.get(channel, {})
