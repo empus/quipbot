@@ -5,19 +5,28 @@ import sys
 import os
 from datetime import datetime
 
-# Add custom RAW level
+# Add custom levels
 RAW = 5  # Lower than DEBUG (10)
+API = 15  # Between DEBUG (10) and INFO (20)
 logging.addLevelName(RAW, 'RAW')
+logging.addLevelName(API, 'API')
 
-# Ensure RAW level is preserved during reloads
+# Ensure custom levels are preserved during reloads
 def raw(self, msg, *args, **kwargs):
     """Log 'msg % args' with severity 'RAW'."""
     if self.isEnabledFor(RAW):
         self._log(RAW, msg, args, **kwargs)
 
-# Add raw method to Logger class if not already present
+def api(self, msg, *args, **kwargs):
+    """Log 'msg % args' with severity 'API'."""
+    if self.isEnabledFor(API):
+        self._log(API, msg, args, **kwargs)
+
+# Add methods to Logger class if not already present
 if not hasattr(logging.Logger, 'raw'):
     logging.Logger.raw = raw
+if not hasattr(logging.Logger, 'api'):
+    logging.Logger.api = api
 
 # ANSI color codes
 COLORS = {
@@ -37,12 +46,13 @@ COLORS = {
     'BRIGHT_MAGENTA': '\033[95m',
     'BRIGHT_CYAN': '\033[96m',
     'BRIGHT_WHITE': '\033[97m',
+    'INDIGO': '\033[38;5;54m',  # Using closest ANSI color to indigo
 }
 
 # Log level colors and emojis
 LEVEL_STYLES = {
     'RAW': {
-        'color': COLORS['BRIGHT_WHITE'],
+        'color': COLORS['INDIGO'],  # Base color for RAW messages
         'emoji': '📡'
     },
     'DEBUG': {
@@ -50,7 +60,7 @@ LEVEL_STYLES = {
         'emoji': '🔍'
     },
     'INFO': {
-        'color': COLORS['GREEN'],
+        'color': COLORS['RESET'],
         'emoji': 'ℹ️'
     },
     'WARNING': {
@@ -64,81 +74,67 @@ LEVEL_STYLES = {
     'CRITICAL': {
         'color': COLORS['BRIGHT_RED'] + COLORS['BOLD'],
         'emoji': '💀'
+    },
+    'API': {
+        'color': COLORS['GREEN'],
+        'emoji': '🤖'
     }
 }
 
 # Event-specific styles
 EVENT_STYLES = {
     'CONNECT': {
-        'color': COLORS['BRIGHT_GREEN'],
         'emoji': '🔌'
     },
     'DISCONNECT': {
-        'color': COLORS['BRIGHT_RED'],
         'emoji': '🔌'
     },
     'JOIN': {
-        'color': COLORS['BRIGHT_CYAN'],
         'emoji': '👋'
     },
     'PART': {
-        'color': COLORS['CYAN'],
         'emoji': '👋'
     },
     'QUIT': {
-        'color': COLORS['CYAN'],
         'emoji': '🚶'
     },
     'KICK': {
-        'color': COLORS['BRIGHT_YELLOW'],
         'emoji': '👢'
     },
     'BAN': {
-        'color': COLORS['BRIGHT_RED'],
         'emoji': '🚫'
     },
     'UNBAN': {
-        'color': COLORS['BRIGHT_GREEN'],
         'emoji': '✅'
     },
     'FLOOD': {
-        'color': COLORS['BRIGHT_MAGENTA'],
         'emoji': '🌊'
     },
     'IGNORE': {
-        'color': COLORS['MAGENTA'],
         'emoji': '🔇'
     },
     'UNIGNORE': {
-        'color': COLORS['GREEN'],
         'emoji': '🔊'
     },
     'TOPIC': {
-        'color': COLORS['BRIGHT_BLUE'],
         'emoji': '📢'
     },
     'MODE': {
-        'color': COLORS['YELLOW'],
         'emoji': '⚙️'
     },
     'NICK': {
-        'color': COLORS['BRIGHT_CYAN'],
         'emoji': '📝'
     },
     'AI': {
-        'color': COLORS['BRIGHT_MAGENTA'],
         'emoji': '🤖'
     },
     'COMMAND': {
-        'color': COLORS['BRIGHT_WHITE'],
         'emoji': '⚡'
     },
     'CONFIG': {
-        'color': COLORS['BRIGHT_YELLOW'],
         'emoji': '⚙️'
     },
     'INVITE': {
-        'color': COLORS['BRIGHT_GREEN'],
         'emoji': '📨'
     }
 }
@@ -149,12 +145,14 @@ class ColoredFormatter(logging.Formatter):
     def __init__(self, use_colors=True, fmt=None):
         super().__init__(fmt=fmt or self._get_default_format(use_colors))
         self.use_colors = use_colors
+        # Calculate max level name length for padding
+        self.max_level_width = max(len(level) for level in LEVEL_STYLES.keys())
 
     def _get_default_format(self, use_colors):
         """Get the default format string based on output type."""
         if use_colors:
-            return '%(asctime)s - %(levelname)s - %(message)s'
-        return '%(asctime)s - %(name)s - [%(levelname)s] - %(message)s'
+            return '%(asctime)s - %(levelname)s %(message)s'  # Removed the - after levelname
+        return '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
     def formatTime(self, record, datefmt=None):
         """Format the timestamp with milliseconds."""
@@ -182,24 +180,24 @@ class ColoredFormatter(logging.Formatter):
                 break
         
         # Apply colors and emojis
-        if event_style:
-            color = event_style['color']
-            emoji = event_style['emoji']
-        else:
-            color = level_style['color']
-            emoji = level_style['emoji']
+        # Always use level-based color unless event style explicitly defines one
+        color = event_style.get('color', level_style['color']) if event_style else level_style['color']
+        # Use event emoji if available, otherwise use level emoji
+        emoji = event_style.get('emoji', level_style['emoji']) if event_style else level_style['emoji']
+        
+        # Special handling for RAW messages to distinguish incoming/outgoing
+        if record_copy.levelname == 'RAW':
+            if record_copy.msg.startswith('>>>'):
+                color = COLORS['BRIGHT_MAGENTA']  # Outgoing messages
+            elif record_copy.msg.startswith('<<<'):
+                color = COLORS['INDIGO']  # Incoming messages
 
-        # Format the level name
-        record_copy.levelname = (
-            f"{color}[{record_copy.levelname}]{COLORS['RESET']}"
-        )
+        # Format the level name with padding for alignment
+        padding = ' ' * (self.max_level_width - len(record_copy.levelname))
+        record_copy.levelname = f"{color}{record_copy.levelname}{padding} - "
         
-        # Format the message with emoji
-        record_copy.msg = f"{emoji}  {color}{record_copy.msg}{COLORS['RESET']}"
-        
-        # Add color to ERROR level logs
-        if record_copy.levelno == logging.ERROR:
-            record_copy.msg = f"{COLORS['RED']}{record_copy.msg}{COLORS['RESET']}"
+        # Format the message with emoji and color the entire line
+        record_copy.msg = f"{emoji}  {record_copy.msg}{COLORS['RESET']}"
         
         return super().format(record_copy)
 
@@ -213,6 +211,10 @@ def setup_logger(name, config):
     # Enable RAW level if configured
     if config.get('log_raw', False):
         log_level = min(log_level, RAW)
+    
+    # Enable API level if configured
+    if config.get('log_api', False):
+        log_level = min(log_level, API)
         
     logger.setLevel(log_level)
     
@@ -232,11 +234,16 @@ def setup_logger(name, config):
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
     
-    # Add raw method to logger
+    # Add custom logging methods
     def raw(msg, *args, **kwargs):
         if logger.isEnabledFor(RAW):
             logger._log(RAW, msg, args, **kwargs)
     
+    def api(msg, *args, **kwargs):
+        if logger.isEnabledFor(API):
+            logger._log(API, msg, args, **kwargs)
+    
     logger.raw = raw
+    logger.api = api
     
     return logger 

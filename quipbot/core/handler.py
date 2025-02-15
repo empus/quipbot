@@ -40,13 +40,13 @@ class MessageHandler:
     def _load_commands(self):
         """Load and initialize all available commands."""
         self.commands = {}  # Reset commands dict
-        logger.debug("[DEBUG] Handler: Starting command load...")
+        logger.debug("Handler: Starting command load...")
         
         try:
             # Get command classes dictionary
             command_classes = load_commands()
             if not command_classes:
-                logger.error("[DEBUG] Handler: No commands were loaded!")
+                logger.error("Handler: No commands were loaded!")
                 return
                 
             # Initialize each command
@@ -55,20 +55,20 @@ class MessageHandler:
                     command = command_class(self.bot)
                     # Verify command name matches the key
                     if command.name != cmd_name:
-                        logger.warning(f"[DEBUG] Handler: Command name mismatch: {cmd_name} != {command.name}")
+                        logger.warning(f"Handler: Command name mismatch: {cmd_name} != {command.name}")
                         continue
                     self.commands[cmd_name] = command
-                    logger.debug(f"[DEBUG] Handler: Successfully initialized command: {cmd_name}")
+                    logger.debug(f"Handler: Successfully initialized command: {cmd_name}")
                 except Exception as e:
-                    logger.error(f"[DEBUG] Handler: Error initializing command {command_class.__name__}: {e}", exc_info=True)
+                    logger.error(f"Handler: Error initializing command {command_class.__name__}: {e}", exc_info=True)
             
             if self.commands:
-                logger.info(f"[DEBUG] Handler: Successfully loaded {len(self.commands)} commands: {', '.join(sorted(self.commands.keys()))}")
+                logger.info(f"Handler: Successfully loaded {len(self.commands)} commands: {', '.join(sorted(self.commands.keys()))}")
             else:
-                logger.error("[DEBUG] Handler: No commands were initialized!")
+                logger.error("Handler: No commands were initialized!")
             
         except Exception as e:
-            logger.error(f"[DEBUG] Handler: Error loading commands: {e}", exc_info=True)
+            logger.error(f"Handler: Error loading commands: {e}", exc_info=True)
             raise  # Re-raise to ensure reload failure is detected
 
     def bind_event(self, event, callback):
@@ -163,17 +163,9 @@ class MessageHandler:
 
         target, message = params.split(' :', 1)
         
-        # Handle CTCP VERSION request
-        if message.startswith('\x01VERSION\x01'):
-            # Check for private message flood
-            if not self.bot.floodpro.check_privmsg_flood(nick, userhost):
-                self.logger.warning(f"Ignoring CTCP VERSION from {nick} ({userhost}) - flood protection triggered")
-                return
-                
-            version = f"QuipBot v1.0 - A witty IRC bot powered by AI - https://github.com/empus/quipbot - by Empus (empus@undernet.org)"
-            self.logger.info(f"Responding to CTCP VERSION request from {nick} ({userhost})")
-            self.bot.send_raw(f"NOTICE {nick} :\x01VERSION {version}\x01")
-            return
+        # Handle CTCP requests
+        if message.startswith('\x01'):
+            return self.handle_ctcp(nick, userhost, message)
         
         # Handle channel messages
         if target.startswith('#'):
@@ -677,3 +669,64 @@ class MessageHandler:
             self.channel_check_thread = threading.Thread(target=self._check_channels_loop, daemon=True)
             self.channel_check_thread.start()
             self.logger.debug("Started channel check thread") 
+
+
+    def handle_ctcp(self, nick, userhost, message):
+        """Handle CTCP requests from users"""
+        if not self.bot.floodpro.check_privmsg_flood(nick, userhost):
+            self.logger.warning(f"Ignoring CTCP {message} from {nick} ({userhost}) - flood protection triggered")
+            return
+
+        version = "2.0"
+        source_url = "https://github.com/empus/quipbot"
+        author = "Empus (empus@undernet.org)"
+
+        # Handle CTCP VERSION request
+        if message.startswith('\x01VERSION\x01'):
+            version = f"QuipBot v{version} - A witty IRC bot powered by AI - {source_url} - by {author}"
+            self.logger.info(f"Responding to CTCP VERSION request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01VERSION {version}\x01")
+            return
+        
+        # Handle CTCP PING request
+        if message.startswith('\x01PING '):
+            ping_params = message[6:-1]  # Extract parameters between PING and final \x01
+            self.logger.info(f"Responding to CTCP PING from {nick} ({userhost}) with params: {ping_params}")
+            self.bot.send_raw(f"NOTICE {nick} :\x01PING {ping_params}\x01")
+            return
+        
+        # Handle CTCP TIME request
+        if message.startswith('\x01TIME\x01'):
+            self.logger.info(f"Received CTCP TIME request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01TIME {time.strftime('%H:%M')} {time.strftime('%Z')} UTC\x01")
+            return
+        
+        # Handle CTCP USERINFO request
+        if message.startswith('\x01USERINFO\x01'):
+            self.logger.info(f"Received CTCP USERINFO request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01USERINFO {self.bot.current_nick} is a witty AI bot\x01")
+            return
+        
+        # Handle CTCP CLIENTINFO request
+        if message.startswith('\x01CLIENTINFO\x01'):
+            self.logger.info(f"Received CTCP CLIENTINFO request from {nick} ({userhost})")
+            supported_commands = "ACTION, CLIENTINFO, PING, TIME, VERSION, USERINFO, SOURCE"
+            self.bot.send_raw(f"NOTICE {nick} :\x01CLIENTINFO {supported_commands}\x01")
+            return
+        
+        # Handle CTCP SOURCE request
+        if message.startswith('\x01SOURCE\x01'):
+            self.logger.info(f"Received CTCP SOURCE request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01SOURCE {source_url}\x01")
+            return
+        
+        # Handle CTCP ACTION request
+        if message.startswith('\x01ACTION\x01'):
+            self.logger.info(f"Received CTCP ACTION request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01ACTION {message[7:-1]}\x01")
+            return
+        
+        # Handle unknown CTCP requests
+        self.logger.warning(f"Received unknown CTCP request from {nick} ({userhost}): {message}")
+        #self.bot.send_raw(f"NOTICE {nick} :Unknown CTCP request\x01")
+        return 

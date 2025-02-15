@@ -90,6 +90,26 @@ class ModuleReloader:
         if not module:
             return dependencies
             
+        # Add explicit core module dependencies
+        if module_name == 'quipbot.core.handler':
+            dependencies.update([
+                'quipbot.core.permissions',
+                'quipbot.utils.logger',
+                'quipbot.utils.ai_client',
+                'quipbot.utils.floodpro'
+            ])
+        elif module_name == 'quipbot.core.permissions':
+            dependencies.update([
+                'quipbot.utils.logger',
+                'quipbot.utils.config'
+            ])
+        elif module_name.startswith('quipbot.commands.'):
+            dependencies.update([
+                'quipbot.core.handler',
+                'quipbot.core.permissions',
+                'quipbot.utils.logger'
+            ])
+            
         # Get module file path if available
         module_file = getattr(module, '__file__', None)
         if module_file:
@@ -497,9 +517,46 @@ class ModuleReloader:
                 paused_threads = self._pause_threads(bot)
                 
                 try:
-                    # Get modules in correct reload order
-                    modules_to_reload = self._get_reload_order()
-                    self.logger.debug(f"Modules to reload in order: {modules_to_reload}")
+                    # Define module reload order by category
+                    utils_order = [
+                        'quipbot.utils.logger',
+                        'quipbot.utils.config',
+                        'quipbot.utils.tokenbucket',
+                        'quipbot.utils.floodpro',
+                        'quipbot.utils.ai_client',
+                        'quipbot.utils.reloader'
+                    ]
+                    
+                    core_order = [
+                        'quipbot.core.permissions',
+                        'quipbot.core.handler',
+                        'quipbot.core.irc'  # Note: only partial reload
+                    ]
+                    
+                    # Get all command modules
+                    command_modules = [
+                        name for name in self._original_modules['sys'].modules.keys()
+                        if name.startswith('quipbot.commands.')
+                    ]
+                    
+                    # Combine all modules in correct order
+                    all_modules = utils_order + core_order + command_modules
+                    
+                    # Get complete dependency graph
+                    dependencies = {}
+                    for module in all_modules:
+                        dependencies[module] = self._get_module_dependencies(module)
+                        self.logger.debug(f"Dependencies for {module}: {dependencies[module]}")
+                    
+                    # Clear module cache for all modules and their dependencies
+                    for module in all_modules:
+                        if module in self._original_modules['sys'].modules:
+                            del self._original_modules['sys'].modules[module]
+                            self.logger.debug(f"Cleared module from cache: {module}")
+                            for dep in dependencies[module]:
+                                if dep in self._original_modules['sys'].modules:
+                                    del self._original_modules['sys'].modules[dep]
+                                    self.logger.debug(f"Cleared dependency from cache: {dep}")
                     
                     # Store references to critical instances
                     old_ai_client = bot.ai_client
@@ -529,127 +586,31 @@ class ModuleReloader:
                         'banned_hosts': old_permissions.banned_hosts.copy() if hasattr(old_permissions, 'banned_hosts') else set()
                     }
                     
-                    # Clear module cache first
-                    for module_name in modules_to_reload:
-                        if module_name in self._original_modules['sys'].modules:
-                            del self._original_modules['sys'].modules[module_name]
-                            self.logger.debug(f"Cleared module from cache: {module_name}")
-                    
                     # Track reloaded modules
                     reloaded = {}
                     
-                    # First reload utils modules in specific order
-                    utils_order = [
-                        'quipbot.utils.logger',
-                        'quipbot.utils.config',
-                        'quipbot.utils.tokenbucket',
-                        'quipbot.utils.floodpro',
-                        'quipbot.utils.ai_client',
-                        'quipbot.utils.reloader'
-                    ]
-                    
-                    for module_name in utils_order:
-                        if module_name in modules_to_reload:
-                            try:
-                                self.logger.debug(f"Reloading utils module: {module_name}")
-                                reloaded[module_name] = self._original_modules['importlib'].import_module(module_name)
-                                self._original_modules['sys'].modules[module_name] = reloaded[module_name]
+                    # Reload all modules in order
+                    for module_name in all_modules:
+                        try:
+                            # Skip if already reloaded through dependency
+                            if module_name in reloaded:
+                                continue
                                 
-                                # Special handling for logger module
-                                if module_name == 'quipbot.utils.logger':
-                                    # Ensure logger is properly reinitialized
-                                    new_logger = reloaded[module_name].setup_logger('QuipBot', bot.config)
-                                    self.logger = new_logger
-                                    self._original_modules['logger'] = new_logger
-                                    bot.logger = new_logger
+                            # Reload module and its dependencies
+                            module = importlib.import_module(module_name)
+                            reloaded[module_name] = importlib.reload(module)
+                            self.logger.debug(f"Reloaded module: {module_name}")
+                            
+                            # Reload dependencies if not already reloaded
+                            for dep in dependencies[module_name]:
+                                if dep not in reloaded and dep in self._original_modules['sys'].modules:
+                                    dep_module = importlib.import_module(dep)
+                                    reloaded[dep] = importlib.reload(dep_module)
+                                    self.logger.debug(f"Reloaded dependency: {dep}")
                                     
-                            except Exception as e:
-                                self.logger.error(f"Error reloading {module_name}: {e}", exc_info=True)
-                                return False
-                    
-                    # Then reload core modules in specific order (except handler which is handled specially)
-                    core_order = [
-                        'quipbot.core.permissions',  # Permissions first as other modules may depend on it
-                        'quipbot.core.irc'  # IRC module last as it contains main bot class
-                    ]
-                    
-                    for module_name in core_order:
-                        if module_name in modules_to_reload:
-                            try:
-                                self.logger.debug(f"Reloading core module: {module_name}")
-                                reloaded[module_name] = self._original_modules['importlib'].import_module(module_name)
-                                self._original_modules['sys'].modules[module_name] = reloaded[module_name]
-                                
-                                # Special handling for permissions module
-                                if module_name == 'quipbot.core.permissions':
-                                    PermissionManager = reloaded[module_name].PermissionManager
-                                    new_permissions = PermissionManager(bot.config)
-                                    # Restore state
-                                    new_permissions.admin_hosts = permissions_state['admin_hosts']
-                                    new_permissions.trusted_hosts = permissions_state['trusted_hosts']
-                                    new_permissions.banned_hosts = permissions_state['banned_hosts']
-                                    new_permissions.set_bot(bot)  # Set bot reference
-                                    bot.permissions = new_permissions
-                                    self.logger.debug("Successfully recreated permissions manager with reloaded code")
-                                
-                            except Exception as e:
-                                self.logger.error(f"Error reloading {module_name}: {e}", exc_info=True)
-                                return False
-                    
-                    # Then reload commands module
-                    if 'quipbot.commands' in modules_to_reload:
-                        try:
-                            self.logger.debug("Reloading commands module")
-                            reloaded['quipbot.commands'] = self._original_modules['importlib'].import_module('quipbot.commands')
-                            self._original_modules['sys'].modules['quipbot.commands'] = reloaded['quipbot.commands']
                         except Exception as e:
-                            self.logger.error(f"Error reloading commands module: {e}", exc_info=True)
-                            return False
-                    
-                    # Then reload handler
-                    if 'quipbot.core.handler' in modules_to_reload:
-                        try:
-                            self.logger.debug("Reloading handler module")
-                            
-                            # Store old handler state
-                            old_handler = bot.handler
-                            old_event_bindings = old_handler._event_bindings.copy()
-                            old_commands = old_handler.commands.copy()
-                            
-                            # Import fresh handler module
-                            handler_module = self._original_modules['importlib'].import_module('quipbot.core.handler')
-                            reloaded['quipbot.core.handler'] = handler_module
-                            self._original_modules['sys'].modules['quipbot.core.handler'] = handler_module
-                            
-                            # Get the new MessageHandler class
-                            handler_class = getattr(handler_module, 'MessageHandler')
-                            
-                            # Create new handler instance
-                            new_handler = handler_class(bot)
-                            
-                            # Restore state
-                            new_handler._event_bindings = old_event_bindings
-                            new_handler.commands = old_commands
-                            
-                            # Update bot's handler reference
-                            bot.handler = new_handler
-                            
-                            self.logger.debug("Successfully recreated handler with reloaded code")
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error reloading handler module: {e}", exc_info=True)
-                            return False
-                    
-                    # Finally reload individual command modules
-                    for module_name in modules_to_reload:
-                        if '.commands.' in module_name and module_name != 'quipbot.commands':
-                            try:
-                                self.logger.debug(f"Reloading command module: {module_name}")
-                                reloaded[module_name] = self._original_modules['importlib'].import_module(module_name)
-                                self._original_modules['sys'].modules[module_name] = reloaded[module_name]
-                            except Exception as e:
-                                self.logger.error(f"Error reloading {module_name}: {e}", exc_info=True)
-                                return False
+                            self.logger.error(f"Error reloading module {module_name}: {e}", exc_info=True)
+                            raise
                     
                     # Store reloaded modules
                     self.loaded_modules = reloaded

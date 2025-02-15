@@ -138,7 +138,7 @@ class AIClient:
                 "max_tokens": 150,
                 "temperature": 0.8,
             }
-            logger.debug(f"API request payload for {channel}: {api_payload}")
+            logger.api(f"API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending API request to {client.base_url} for channel {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -222,7 +222,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.debug(f"Topic API request payload for {channel}: {api_payload}")
+            logger.api(f"Topic API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending topic generation request to {client.base_url} for channel {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -251,7 +251,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.debug(f"Entrance API request payload for {channel}: {api_payload}")
+            logger.api(f"Entrance API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending entrance message request to {client.base_url} for channel {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -276,7 +276,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.debug(f"Kick API request payload for {channel}: {api_payload}")
+            logger.api(f"Kick API request payload for {channel}: {api_payload}")
             
             logger.debug(f"Sending kick reason request to {client.base_url} for channel {channel}")
             response = client.chat.completions.create(**api_payload)

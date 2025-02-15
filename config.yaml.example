@@ -264,9 +264,10 @@ commands:
   
 
 # Logging configuration
-log_level: "DEBUG"    # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_file: "quip.log"  # Log file name
-log_raw: false        # Log raw IRC traffic?
+log_level: "INFO"        # DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_raw: false           # Enable raw IRC message logging
+log_api: false           # Enable API query logging
+log_file: "quipbot.log"  # Optional log file path
 
 # General bot configuration
 pid_file: "quip.pid"  # Path to PID file when running as daemon 
