@@ -10,7 +10,8 @@ class RehashCommand(Command):
 
     @property
     def help(self):
-        prefix = self.bot.config.get('cmd_prefix', '!')
+        # Get prefix from channel if available, otherwise use global
+        prefix = self.bot.get_channel_config(self.bot.channel if hasattr(self.bot, 'channel') else None, 'cmd_prefix', '!')
         return f"Reload the bot configuration file only. Usage: {prefix}rehash"
 
     def execute(self, nick, channel, args):

@@ -8,9 +8,10 @@ logger = logging.getLogger('QuipBot')
 
 # API base URLs for different services
 API_URLS = {
-    'openai': 'https://api.openai.com/v1',  # Base path for OpenAI API
+    'openai': 'https://api.openai.com/v1',         # Base path for OpenAI API
     'perplexity': 'https://api.perplexity.ai/v1',  # Base path for Perplexity API
-    'grok': 'https://api.grok.com/v1'  # Base path for Grok API
+    'grok': 'https://api.grok.com/v1',             # Base path for Grok API
+    'anthropic': 'https://api.anthropic.com/v1'    # Base path for Anthropic API
 }
 
 class AIClient:
@@ -20,41 +21,19 @@ class AIClient:
         self.chat_history = defaultdict(list)  # {channel: [messages]}
         self.bot = None  # Will be set by IRCBot after initialization
         self.logger = logging.getLogger('QuipBot')
-        # Initialize with global config - will be overridden per channel as needed
-        self.default_prompt = config['ai_prompt_default']
-        self.model = config['ai_model']
-        logger.info(f"Initialized AI client with model {self.model}")  # Add logging
 
     def set_bot(self, bot):
         """Set the bot instance reference."""
         self.bot = bot
 
-    def _get_channel_config(self, channel, key, default=None):
-        """Get channel-specific config value."""
-        if not channel:
-            return self.config.get(key, default)
-            
-        # Find channel config
-        channel_config = next(
-            (c for c in self.config['channels'] if c['name'].lower() == channel.lower()),
-            None
-        )
-        
-        # Check channel-specific override
-        if channel_config and key in channel_config:
-            return channel_config[key]
-            
-        # Fall back to global config
-        return self.config.get(key, default)
-
     def _get_client_for_channel(self, channel):
         """Get OpenAI client with channel-specific configuration."""
-        service = self._get_channel_config(channel, 'ai_service', 'openai')
+        service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
         if service not in API_URLS:
-            logger.warning(f"Unknown AI service '{service}' for channel {channel}, falling back to OpenAI")
+            self.logger.warning(f"Unknown AI service '{service}' for channel {channel}, falling back to OpenAI")
             service = 'openai'
             
-        api_key = self._get_channel_config(channel, 'ai_key', self.config['ai_key'])
+        api_key = self.bot.get_channel_config(channel, 'ai_key', '')
         
         return OpenAI(
             api_key=api_key,
@@ -77,10 +56,10 @@ class AIClient:
             
         return f"\nCurrent users in channel: {', '.join(nicklist)}"
 
-    def _get_prompt_with_nicklist(self, prompt_key, prompt_default, channel):
+    def _get_prompt_with_nicklist(self, prompt_key, channel):
         """Get channel-specific prompt with nicklist context if enabled."""
         # Get base prompt
-        prompt = self._get_channel_config(channel, prompt_key, prompt_default)
+        prompt = self.bot.get_channel_config(channel, prompt_key, '')
         
         # Add nicklist context if enabled
         nicklist_context = self._get_nicklist_context(channel)
@@ -98,10 +77,11 @@ class AIClient:
         try:
             # Get channel-specific configuration
             client = self._get_client_for_channel(channel)
-            model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
-            prompt = self._get_prompt_with_nicklist('ai_prompt_default', self.config['ai_prompt_default'], channel)
+            prompt = self._get_prompt_with_nicklist('ai_prompt_default', channel)
             
             # Build context with or without history
             if include_history:
@@ -114,7 +94,7 @@ class AIClient:
                 for msg in history[-history_size:]:
                     if ': ' in msg:
                         unique_nicks.add(msg.split(': ', 1)[0])
-                logger.debug(f"Including chat history with participants: {', '.join(sorted(unique_nicks))}")
+                self.logger.debug(f"Including chat history with participants: {', '.join(sorted(unique_nicks))}")
                 
                 context = (
                     f"{prompt}\n\n"
@@ -138,13 +118,13 @@ class AIClient:
                 "max_tokens": 150,
                 "temperature": 0.8,
             }
-            logger.api(f"API request payload for {channel}: {api_payload}")
+            self.logger.debug(f"API request payload for {channel}: {api_payload}")
             
-            logger.debug(f"Sending API request to {client.base_url} for channel {channel}")
+            self.logger.info(f"Sending API request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"API error for channel {channel}: {str(e)}", exc_info=True)
+            self.logger.error(f"API error for channel {channel}: {str(e)}", exc_info=True)
             return "Uh... I'm speechless (error)."
 
     def add_to_history(self, message, channel):
@@ -167,14 +147,7 @@ class AIClient:
         if not channel:
             return 20  # Default size
             
-        # Find channel config
-        channel_config = next(
-            (c for c in self.config['channels'] if c['name'].lower() == channel.lower()),
-            None
-        )
-        
-        # Return configured size or default
-        return channel_config.get('chat_history', 20) if channel_config else 20
+        return self.bot.get_channel_config(channel, 'chat_history', 20)
 
     def get_recent_users(self, channel, within_messages=20):
         """Get list of users who have spoken recently in a channel."""
@@ -192,20 +165,21 @@ class AIClient:
                 
         return list(users)
 
-    def generate_topic(self, prompt, channel=None):
+    def generate_topic(self, channel=None):
         """Generate a random topic."""
         try:
             client = self._get_client_for_channel(channel)
-            model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get channel-specific topic prompt
-            prompt = self._get_prompt_with_nicklist('ai_prompt_topic', prompt, channel)
+            prompt = self._get_prompt_with_nicklist('ai_prompt_topic', channel)
             
             # Build context, including history only if enabled
             context = prompt
             
             # Check if we should include chat history context
-            include_history = self._get_channel_config(channel, 'ai_context_topic', False)
+            include_history = self.bot.get_channel_config(channel, 'ai_context_topic', False)
             if include_history and channel:
                 history = self.chat_history.get(channel, [])
                 if history:
@@ -222,27 +196,28 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.api(f"Topic API request payload for {channel}: {api_payload}")
+            self.logger.debug(f"Topic API request payload for {channel}: {api_payload}")
             
-            logger.debug(f"Sending topic generation request to {client.base_url} for channel {channel}")
+            self.logger.info(f"Sending topic generation request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"API error generating topic for channel {channel}: {str(e)}", exc_info=True)
+            self.logger.error(f"API error generating topic for channel {channel}: {str(e)}", exc_info=True)
             return "Just another boring day in IRC..."
 
-    def generate_entrance(self, prompt, channel=None):
+    def generate_entrance(self, channel=None):
         """Generate an entrance message."""
         try:
             # Check if entrance messages are enabled for this channel
-            if not self._get_channel_config(channel, 'ai_entrance', True):
+            if not self.bot.get_channel_config(channel, 'ai_entrance', True):
                 return None
                 
             client = self._get_client_for_channel(channel)
-            model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
-            prompt = self._get_prompt_with_nicklist('ai_prompt_entrance', prompt, channel)
+            prompt = self._get_prompt_with_nicklist('ai_prompt_entrance', channel)
             
             # Log the full API request payload
             api_payload = {
@@ -251,23 +226,24 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.api(f"Entrance API request payload for {channel}: {api_payload}")
+            self.logger.debug(f"Entrance API request payload for {channel}: {api_payload}")
             
-            logger.debug(f"Sending entrance message request to {client.base_url} for channel {channel}")
+            self.logger.info(f"Sending entrance message request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
             return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"API error generating entrance for channel {channel}: {str(e)}", exc_info=True)
+            self.logger.error(f"API error generating entrance for channel {channel}: {str(e)}", exc_info=True)
             return "Has arrived!"
 
-    def generate_kick_reason(self, prompt, channel=None):
+    def generate_kick_reason(self, channel=None):
         """Generate a kick reason."""
         try:
             client = self._get_client_for_channel(channel)
-            model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
-            prompt = self._get_prompt_with_nicklist('ai_prompt_kick', prompt, channel)
+            prompt = self._get_prompt_with_nicklist('ai_prompt_kick', channel)
             
             # Log the full API request payload
             api_payload = {
@@ -276,9 +252,9 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            logger.api(f"Kick API request payload for {channel}: {api_payload}")
+            self.logger.debug(f"Kick API request payload for {channel}: {api_payload}")
             
-            logger.debug(f"Sending kick reason request to {client.base_url} for channel {channel}")
+            self.logger.info(f"Sending kick reason request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
             
             # Get the response and ensure it's not None
@@ -293,5 +269,5 @@ class AIClient:
             return reason
             
         except Exception as e:
-            logger.error(f"API error generating kick reason for channel {channel}: {str(e)}", exc_info=True)
+            self.logger.error(f"API error generating kick reason for channel {channel}: {str(e)}", exc_info=True)
             return "Because I said so!" 

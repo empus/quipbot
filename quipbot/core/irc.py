@@ -15,6 +15,36 @@ from ..utils.logger import setup_logger
 import yaml
 import re
 from ..utils.reloader import ModuleReloader
+import signal
+import sys
+
+def _setup_signal_handlers(bot_instance):
+    """Set up signal handlers for the bot.
+    
+    Args:
+        bot_instance: The IRCBot instance to handle signals for
+    """
+    def handle_sighup(signum, frame):
+        """Handle SIGHUP signal by reloading config."""
+        bot_instance.logger.info("Received SIGHUP signal - reloading configuration")
+        if bot_instance.reload_config():
+            bot_instance.logger.info("Configuration reloaded successfully")
+        else:
+            bot_instance.logger.error("Failed to reload configuration")
+            
+    def handle_sigusr1(signum, frame):
+        """Handle SIGUSR1 signal by performing a full reload."""
+        bot_instance.logger.info("Received SIGUSR1 signal - performing full reload")
+        if bot_instance.reloader.reload_modules(bot_instance):
+            bot_instance.logger.info("Full reload completed successfully")
+        else:
+            bot_instance.logger.error("Failed to complete full reload")
+            
+    # Register signal handlers
+    if sys.platform != 'win32':  # Signals not fully supported on Windows
+        signal.signal(signal.SIGHUP, handle_sighup)
+        signal.signal(signal.SIGUSR1, handle_sigusr1)
+        bot_instance.logger.info("Registered signal handlers for SIGHUP and SIGUSR1")
 
 class IRCBot:
     def __init__(self, config, config_file='config.yaml'):
@@ -41,6 +71,9 @@ class IRCBot:
         
         # Set up logger
         self.logger = setup_logger('QuipBot', config)
+        
+        # Set up signal handlers
+        _setup_signal_handlers(self)
         
         self.current_server_index = 0
         self.sock = None
@@ -332,7 +365,7 @@ class IRCBot:
         self.conversation_timers[channel.lower()] = time.time() + continue_freq
         self.logger.debug(f"Scheduled next response for {channel} in {continue_freq}s")
 
-    def send_channel_message(self, channel, message, add_to_history=True):
+    def send_channel_message(self, channel, message, add_to_history=False):
         """Send a message to a channel.
         
         Args:
@@ -954,6 +987,9 @@ class IRCBot:
         # Check for private message flood
         if not self.floodpro.check_privmsg_flood(nick, userhost):
             return
+
+        # Tempoary disable private messages
+        return
 
         # Process message if not flood
         response = self.ai_client.get_response(message, self.current_nick)  # Use current_nick

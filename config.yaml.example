@@ -37,6 +37,7 @@ ignore_regex:
   - "^!"          # Ignore messages starting with !
   - "^\\."        # Ignore messages starting with .
   - "^[cC]\\s"    # Ignore messages starting with c followed by a space
+  - "^chief:\\s"  # Ignore messages starting with chief: followed by a space
 
 # Bot administrators (can use all commands)
 # Supports network accounts or nick!ident@host wildcards (e.g. "*!sid479710@*.irccloud.com")

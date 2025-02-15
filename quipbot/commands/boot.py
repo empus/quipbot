@@ -10,7 +10,8 @@ class BootCommand(Command):
 
     @property
     def help(self):
-        prefix = self.bot.config.get('cmd_prefix', '!')
+        # Get prefix from channel if available, otherwise use global
+        prefix = self.bot.get_channel_config(self.bot.channel if hasattr(self.bot, 'channel') else None, 'cmd_prefix', '!')
         return f"Kick a random user from the channel. Usage: {prefix}boot"
 
     def execute(self, nick, channel, args):

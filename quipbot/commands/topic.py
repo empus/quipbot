@@ -9,7 +9,8 @@ class TopicCommand(Command):
 
     @property
     def help(self):
-        prefix = self.bot.config.get('cmd_prefix', '!')
+        # Get prefix from channel if available, otherwise use global
+        prefix = self.bot.get_channel_config(self.bot.channel if hasattr(self.bot, 'channel') else None, 'cmd_prefix', '!')
         return f"Change the channel topic. Usage: {prefix}topic <new topic>"
 
     def execute(self, nick, channel, args):
@@ -17,9 +18,7 @@ class TopicCommand(Command):
         if args:
             topic = " ".join(args)
         else:
-            # Get channel-specific topic prompt if set, otherwise use global
-            prompt = self.bot.get_channel_config(channel, 'ai_prompt_topic', self.bot.config['ai_prompt_topic'])
-            topic = self.bot.ai_client.generate_topic(prompt, channel=channel)
+            topic = self.bot.ai_client.generate_topic(channel=channel)
             
         if topic:
             # Format the topic to remove encapsulating quotes
