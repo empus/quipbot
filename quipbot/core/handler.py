@@ -110,6 +110,18 @@ class MessageHandler:
 
         target, message = params.split(' :', 1)
         
+        # Handle CTCP VERSION request
+        if message.startswith('\x01VERSION\x01'):
+            # Check for private message flood
+            if not self.bot.floodpro.check_privmsg_flood(nick, userhost):
+                self.logger.warning(f"Ignoring CTCP VERSION from {nick} ({userhost}) - flood protection triggered")
+                return
+                
+            version = f"QuipBot v1.0 - A witty IRC bot powered by AI - https://github.com/empus/quipbot - by Empus (empus@undernet.org)"
+            self.logger.info(f"Responding to CTCP VERSION request from {nick} ({userhost})")
+            self.bot.send_raw(f"NOTICE {nick} :\x01VERSION {version}\x01")
+            return
+        
         # Handle channel messages
         if target.startswith('#'):
             # Skip if we're not in the channel
@@ -157,7 +169,9 @@ class MessageHandler:
                     add_to_history=True
                 )
                 if entrance_msg:
-                    self.bot.send_channel_message(channel, entrance_msg)
+                    # Format the entrance message to remove encapsulating quotes
+                    formatted_entrance = self.bot.format_message(entrance_msg)
+                    self.bot.send_channel_message(channel, formatted_entrance)
                 else:
                     self.logger.debug(f"Failed to generate entrance message for {channel}")
         else:
@@ -172,7 +186,7 @@ class MessageHandler:
                 # Request WHOX info just for this user
                 # %tnuhiraf gives us: channel, nick, user, host, ip, realname, account, flags
                 self.bot.send_raw(f"WHO {nick} %tnuhiraf")
-                self.logger.debug(f"Added {nick} to {channel} users: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+                self.logger.debug(f"Added {nick} to {channel} users")
         
         # Track user info
         if nick not in self.bot.users:

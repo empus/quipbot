@@ -196,13 +196,27 @@ class AIClient:
             client = self._get_client_for_channel(channel)
             model = self._get_channel_config(channel, 'ai_model', self.config['ai_model'])
             
-            # Get prompt with nicklist context
+            # Get channel-specific topic prompt
             prompt = self._get_prompt_with_nicklist('ai_prompt_topic', prompt, channel)
+            
+            # Build context, including history only if enabled
+            context = prompt
+            
+            # Check if we should include chat history context
+            include_history = self._get_channel_config(channel, 'ai_context_topic', False)
+            if include_history and channel:
+                history = self.chat_history.get(channel, [])
+                if history:
+                    history_size = self._get_channel_history_size(channel)
+                    recent_history = history[-history_size:]  # Only use most recent messages
+                    context += "\n\nRecent channel conversation:\n"
+                    context += "\n".join(recent_history)
+                    context += "\n\nBased on this context, generate a topic that's relevant and witty.\n"
             
             # Log the full API request payload
             api_payload = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": context}],
                 "max_tokens": 50,
                 "temperature": 0.9,
             }

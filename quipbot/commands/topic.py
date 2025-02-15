@@ -17,9 +17,13 @@ class TopicCommand(Command):
         if args:
             topic = " ".join(args)
         else:
-            topic = self.bot.ai_client.generate_topic(
-                self.bot.config['ai_prompt_topic']
-            )
+            # Get channel-specific topic prompt if set, otherwise use global
+            prompt = self.bot.get_channel_config(channel, 'ai_prompt_topic', self.bot.config['ai_prompt_topic'])
+            topic = self.bot.ai_client.generate_topic(prompt, channel=channel)
             
-        self.bot.send_raw(f"TOPIC {channel} :{topic}")
+        if topic:
+            # Format the topic to remove encapsulating quotes
+            formatted_topic = self.bot.format_message(topic)
+            self.bot.send_raw(f"TOPIC {channel} :{formatted_topic}")
+            
         return None 

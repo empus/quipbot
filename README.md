@@ -4,6 +4,46 @@
 
 An intelligent, sarcastic IRC bot powered by OpenAI-compatible APIs that brings personality and fun to your IRC channels. QuipBot can engage in conversations and perform various automated actions while maintaining a witty persona.
 
+## How It Works
+
+The bot is designed to encourage and deliver fun channel conversation by kickstarting and participating in chatter.
+
+Many features can be toggled on and off and specific behaviour may be fine-tuned to suit your requirements, including for specific channels.
+
+By default, the bot will operate like the below:
+
+1. After entering the channel, announce a fun AI generated entrance message
+
+2. Every `idle_chat_interval` seconds, speak a fun conversation starting message if the channel has been idle for more than `idle_chat_time` seconds.
+
+3. Every `random_action_interval` seconds, if the channel has been idle for more than `idle_chat_time` seconds, randomly choose to set a fun AI generated topic or kick a random non-opped (and non-admin) user from the recent chat history (from last `channels.chat_history` lines)
+
+4. Respond when someone speaks to or about the bot and continue chatting every `ai_continue_freq` seconds for `ai_continue_mins` minutes after the last bot mention.
+
+5. Allow ops and admins to use the `@boot` command to randomly kick a non-opped and non-admin user from the chat history with a fun kick message.
+
+
+## Commands
+
+All commands can be configured to require specific user permissions, being either admin, op, voice, or any.
+
+Admin supercedes op and voice; op supercedes voice; voice supercedes any.
+
+The bot supports the following commands:
+
+- `@boot`: Kick a random non-opped and non-admin user from the chat history with a fun kick message.
+- `@topic [topic]`: Set a custom topic if given, otherwise automate a fun AI generated topic for the channel.
+- `@sleep <mins>`: Put the bot to sleep for a specified amount of time.
+- `@wake`: Wake the bot up from sleep.
+- `@say <message>`: Speak a message to the channel.
+- `@reload`: Reload the bot's configuration.
+- `@die`: Shutdown the bot.
+- `@jump [server]`: Jump to a specific server or the next server in the list.
+- `@var <variable>`: Print the value of a variable to the log.
+- `@config <variable>`: Print the value of a configuration variable to the log.
+- `@help [command]`: Show the help message for a given command.
+
+
 ## Features
 
 ### AI-Powered Interactions
@@ -14,7 +54,7 @@ An intelligent, sarcastic IRC bot powered by OpenAI-compatible APIs that brings 
 - Configurable AI personality and response style
 - Supports multiple AI providers (OpenAI, Perplexity, Grok)
 - Selective chat history context for different interaction types
-- Configurable random response delays
+- Configurable random response delays to appear more natural
 - Sleep and wake commands to create quiet times
 
 ### Channel Management
@@ -74,14 +114,19 @@ Custom configuration can be loaded from the command line with the `-c` option.
 Each channel can override global settings:
 - `idle_chat_interval`: Time between random chat messages (0 to disable)
 - `random_action_interval`: Time between random actions (0 to disable)
+- `idle_chat_time`: Idle time required to trigger chat or random actions (0 to disable)
 - `ai_prompt_idle`: Custom prompt for idle chat
 - `ai_prompt_topic`: Custom prompt for topic generation
 - `ai_prompt_kick`: Custom prompt for kick reasons
 - `ai_mention`: Whether to respond when the bot's nickname is mentioned
+- `ai_context_direct`: Whether to include chat history for direct messages
+- `ai_context_mention`: Whether to include chat history for mentions of the bot's nick
+- `ai_context_idle`: Whether to include chat history for idle chat
+- `ai_context_topic`: Whether to include chat history for topic generation
+- `ai_nicklist`: Whether to send the channel's nicklist to the AI for added context
 - `ignore_nicks`: Channel-specific nicks to ignore (in addition to global ignores)
-- `ai_delay`: Channel-specific response delay range
-- `ai_context_*`: Channel-specific history context settings
 - `floodpro`: Channel-specific flood protection settings
+- `ai_delay`: Channel-specific response delay range
 - `chat_history`: Channel-specific chat history settings
 - `ai_service`: Channel-specific AI service settings
 - `ai_key`: Channel-specific AI API key settings
@@ -187,7 +232,7 @@ options:
 
 ## Troubleshooting
 
-# Missing Rust compiler
+### Missing Rust compiler
 
 If you get an error about the Rust compiler, you need to install it. 
 
@@ -195,7 +240,7 @@ If you get an error about the Rust compiler, you need to install it.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-# Bot Logging
+### Bot Logging
 
 Consider increasing the log verbosity to `DEBUG` with the `log_level` setting in the `config.yaml` file to get more information about what the bot is doing. 
 

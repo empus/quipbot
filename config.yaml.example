@@ -77,6 +77,7 @@ channels:
     #ai_context_direct: false   # Override global setting per channel
     #ai_context_mention: true   # Override global setting per channel
     #ai_context_idle: true      # Override global setting per channel
+    #ai_context_topic: true     # Override global setting per channel
     #ai_continue: true   # Override global conversation continuation setting
     #ai_continue_mins: 10  # Override global continuation timeout
     #ai_continue_freq: 30  # Less frequent checks (secs) in this channel for ongoing chat
@@ -151,10 +152,11 @@ ai_model: "gpt-4o-mini"  # Examples: gpt-4o-mini, gpt-4o
 # Whether to respond when the bot's nickname is mentioned (global default)
 ai_mention: true
 
-# Whether to include chat history context in different message types (global defaults)
+# Whether to include chat history context in different AI generatedmessage types (global defaults)
 ai_context_direct: true   # For direct messages (nick: message)
 ai_context_mention: true  # For mentions of the bot's nick
 ai_context_idle: true     # For idle chat interval messages
+ai_context_topic: true    # For AI generated topics
 
 # Artificial delay range (in seconds) before responding to direct messages or mentions
 ai_delay: [5.0, 8.0]  # [min, max] - Set to [0, 0] to disable delay

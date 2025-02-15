@@ -705,8 +705,10 @@ class IRCBot:
         """Generate and set a random topic."""
         topic = self.ai_client.generate_topic(self.config['ai_prompt_topic'])
         if topic:
+            # Format the topic to remove encapsulating quotes
+            formatted_topic = self.format_message(topic)
             for channel in self.channel_users.keys():
-                self.send_raw(f"TOPIC {channel} :{topic}")
+                self.send_raw(f"TOPIC {channel} :{formatted_topic}")
 
     def generate_random_kick(self):
         """Generate and perform a random kick."""
