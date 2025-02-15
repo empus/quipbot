@@ -2,6 +2,8 @@
 
 import fnmatch
 import logging
+from collections import defaultdict
+import time
 
 logger = logging.getLogger('QuipBot')
 
@@ -10,10 +12,18 @@ class PermissionManager:
         """Initialize permission manager."""
         self.config = config
         self.logger = logger
+        self.admin_cache = {}  # {(nick, userhost): (result, timestamp)}
+        self.cache_ttl = 60  # Cache results for 60 seconds
+        self.bot = None  # Will be set by IRCBot after initialization
+
+    def set_bot(self, bot):
+        """Set the bot instance reference."""
+        self.bot = bot
 
     def update_config(self, new_config):
         """Update configuration."""
         self.config = new_config
+        self.admin_cache.clear()  # Clear cache when config changes
 
     def _get_channel_config(self, channel, key, default=None):
         """Get channel-specific config value."""
@@ -54,48 +64,95 @@ class PermissionManager:
         return global_cmd_config
 
     def is_admin(self, nick, userhost):
-        """Check if a user is a bot administrator.
-        
-        Args:
-            nick: The nickname to check
-            userhost: The user@host to check
-            
-        Returns:
-            bool: True if user is an admin, False otherwise
-        """
+        """Check if a user is a bot administrator."""
         if not userhost:
             return False
+
+        # Check cache first
+        cache_key = (nick.lower(), userhost.lower())
+        now = time.time()
+        if cache_key in self.admin_cache:
+            result, timestamp = self.admin_cache[cache_key]
+            if now - timestamp < self.cache_ttl:
+                return result
+            else:
+                # Remove expired cache entry
+                del self.admin_cache[cache_key]
             
         # Get admin list from config
         admins = self.config.get('admins', [])
         
+        # First check if we have user data stored
+        user_data = self.bot.users.get(nick, {})
+        if user_data:
+            ident = user_data.get('ident', '')
+            host = user_data.get('host', '')
+        else:
+            # Fall back to splitting userhost if no stored data
+            if '@' in userhost:
+                ident, host = userhost.split('@', 1)
+            else:
+                ident = ''
+                host = userhost
+        
+        # Create full nick!user@host format
+        full_mask = f"{nick}!{ident}@{host}"
+        
         # Check each admin pattern
         for pattern in admins:
-            # If pattern contains @ it's a userhost pattern
-            if '@' in pattern:
-                if self._match_userhost(userhost, pattern):
+            # If pattern contains ! or @, it's a full mask pattern
+            if '!' in pattern or '@' in pattern:
+                # If pattern doesn't contain !, add wildcard for ident/host part
+                if '!' not in pattern and '@' in pattern:
+                    pattern = f"*!{pattern}"
+                # If pattern doesn't contain @, add wildcard for host part
+                elif '!' in pattern and '@' not in pattern:
+                    pattern = f"{pattern}@*"
+                # Match against full mask
+                if self._match_mask(full_mask, pattern):
+                    self.logger.debug(f"Admin match: {nick} matches pattern {pattern}")
+                    self.admin_cache[cache_key] = (True, now)
                     return True
-            # Otherwise it's a nickname pattern
+            # Otherwise it's a nickname or account pattern
             else:
+                # Check for account match if we have account data
+                if user_data.get('account') and user_data['account'].lower() == pattern.lower():
+                    self.logger.debug(f"Admin match: {nick} matches account {pattern}")
+                    self.admin_cache[cache_key] = (True, now)
+                    return True
+                # Check for nickname match
                 if nick.lower() == pattern.lower():
+                    self.logger.debug(f"Admin match: {nick} matches nickname {pattern}")
+                    self.admin_cache[cache_key] = (True, now)
                     return True
                     
+        # Cache negative result
+        self.admin_cache[cache_key] = (False, now)
         return False
         
-    def _match_userhost(self, userhost, pattern):
-        """Match a userhost against a pattern.
+    def _match_mask(self, mask, pattern):
+        """Match a mask against a pattern, supporting IRC-style wildcards."""
+        # Convert IRC-style pattern to regex
+        # 1. Escape special regex chars except * and ?
+        special_chars = '.+^$[](){}|\\'
+        regex_pattern = ''.join('\\' + c if c in special_chars else c for c in pattern)
         
-        Args:
-            userhost: The user@host to check
-            pattern: The pattern to match against
-            
-        Returns:
-            bool: True if userhost matches pattern, False otherwise
-        """
-        # Convert pattern to regex
-        import re
-        pattern = pattern.replace('.', '\\.').replace('*', '.*')
-        return bool(re.match(pattern, userhost, re.IGNORECASE))
+        # 2. Convert * to match anything (including ! and @)
+        regex_pattern = regex_pattern.replace('*', '.*?')
+        
+        # 3. Convert ? to match single character
+        regex_pattern = regex_pattern.replace('?', '.')
+        
+        # 4. Add start/end anchors
+        regex_pattern = f"^{regex_pattern}$"
+        
+        # Try to match
+        try:
+            import re
+            return bool(re.match(regex_pattern, mask, re.IGNORECASE))
+        except re.error as e:
+            self.logger.error(f"Invalid pattern '{pattern}': {e}")
+            return False
         
     def check_command_permission(self, command, nick, userhost, channel_info):
         """Check if a user has permission to use a command.

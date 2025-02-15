@@ -8,6 +8,9 @@ import importlib
 from .. import commands
 import time
 import threading
+from ..commands import load_commands
+
+logger = logging.getLogger('QuipBot')
 
 class MessageHandler:
     def __init__(self, bot):
@@ -15,45 +18,73 @@ class MessageHandler:
         self.bot = bot
         self.logger = self.bot.logger
         self.commands = {}
-        self._load_commands()
+        self._event_bindings = {}
         
-        # Start channel check thread
-        self.channel_check_thread = threading.Thread(target=self._check_channels_loop, daemon=True)
-        self.channel_check_thread.start()
-        self.logger.debug("Started channel check thread")
+        # Bind event handlers
+        self.bind_event('JOIN', self.handle_join)
+        self.bind_event('PART', self.handle_part)
+        self.bind_event('QUIT', self.handle_quit)
+        self.bind_event('NICK', self.handle_nick)
+        self.bind_event('MODE', self.handle_mode)
+        self.bind_event('PRIVMSG', self.handle_privmsg)
+        self.bind_event('INVITE', self.handle_invite)
+        self.bind_event('KICK', self.handle_kick)
+        
+        # Initialize but don't start channel check thread yet
+        self.channel_check_thread = None
+        
+        # Load commands after everything else is initialized
+        self._load_commands()
+        self.logger.debug("Message handler initialized")
 
     def _load_commands(self):
-        """Load all command modules."""
-        commands_path = Path(__file__).parent.parent / 'commands'
-        self.logger.debug(f"Loading commands from: {commands_path}")
+        """Load and initialize all available commands."""
+        self.commands = {}  # Reset commands dict
+        logger.debug("[DEBUG] Handler: Starting command load...")
         
-        for _, name, _ in pkgutil.iter_modules([str(commands_path)]):
-            if name != '__init__':
+        try:
+            # Get command classes dictionary
+            command_classes = load_commands()
+            if not command_classes:
+                logger.error("[DEBUG] Handler: No commands were loaded!")
+                return
+                
+            # Initialize each command
+            for cmd_name, command_class in command_classes.items():
                 try:
-                    self.logger.debug(f"Attempting to load command module: {name}")
-                    module = importlib.import_module(f'..commands.{name}', package=__package__)
-                    
-                    # Find the command class (should be the only class that inherits from Command)
-                    command_class_found = False
-                    for attr_name in dir(module):
-                        attr = getattr(module, attr_name)
-                        if isinstance(attr, type) and issubclass(attr, commands.Command) and attr != commands.Command:
-                            cmd = attr(self.bot)
-                            self.commands[cmd.name] = cmd
-                            command_class_found = True
-                            self.logger.debug(f"Loaded command: {cmd.name}")
-                            
-                    if not command_class_found:
-                        self.logger.warning(f"No command class found in module: {name}")
-                        
+                    command = command_class(self.bot)
+                    # Verify command name matches the key
+                    if command.name != cmd_name:
+                        logger.warning(f"[DEBUG] Handler: Command name mismatch: {cmd_name} != {command.name}")
+                        continue
+                    self.commands[cmd_name] = command
+                    logger.debug(f"[DEBUG] Handler: Successfully initialized command: {cmd_name}")
                 except Exception as e:
-                    self.logger.error(f"Failed to load command {name}: {e}")
-                    
-        self.logger.info(f"Loaded commands: {', '.join(sorted(self.commands.keys()))}")
+                    logger.error(f"[DEBUG] Handler: Error initializing command {command_class.__name__}: {e}", exc_info=True)
+            
+            if self.commands:
+                logger.info(f"[DEBUG] Handler: Successfully loaded {len(self.commands)} commands: {', '.join(sorted(self.commands.keys()))}")
+            else:
+                logger.error("[DEBUG] Handler: No commands were initialized!")
+            
+        except Exception as e:
+            logger.error(f"[DEBUG] Handler: Error loading commands: {e}", exc_info=True)
+            raise  # Re-raise to ensure reload failure is detected
+
+    def bind_event(self, event, callback):
+        """Bind a callback to an IRC event.
+        
+        Args:
+            event: The IRC event (e.g., 'PRIVMSG', 'JOIN')
+            callback: The function to call when the event occurs
+        """
+        if event not in self._event_bindings:
+            self._event_bindings[event] = set()
+        self._event_bindings[event].add(callback)
 
     def handle_line(self, line):
         """Handle a line from the IRC server."""
-        self.logger.debug(f"<<< {line}")
+        self.logger.raw(f"<<< {line}")
 
         if line.startswith('PING'):
             self.bot.send_raw(f"PONG {line[5:]}")
@@ -70,7 +101,7 @@ class MessageHandler:
             # Store/update user info when we see them
             if nick and userhost and nick != self.bot.nick:
                 if nick not in self.bot.users:
-                    self.bot.users[nick] = {'host': userhost}
+                    self.bot.users[nick] = {'host': userhost, 'account': None}
                 elif not self.bot.users[nick].get('host'):
                     self.bot.users[nick]['host'] = userhost
         else:
@@ -83,11 +114,29 @@ class MessageHandler:
 
         # Handle numeric responses
         if command.isdigit():
+            # Get the full params including the target
+            if params.startswith(':'):
+                params = params[1:]
+            
             numeric_handler = getattr(self, f'handle_{command}', None)
             if numeric_handler:
-                self.logger.debug(f"Handling numeric {command} with handler")
-                numeric_handler(nick, userhost, params)
+                # self.logger.debug(f"Handling numeric {command} with handler: {params}")
+                try:
+                    numeric_handler(nick, userhost, params)
+                except Exception as e:
+                    self.logger.error(f"Error in numeric handler {command}: {e}")
             else:
+                # Try standard numeric handlers for specific numerics we care about
+                if command in ('353', '366', '352', '354', '315'):
+                    handler_name = f'handle_{command}'
+                    if hasattr(self, handler_name):
+                        try:
+                            self.logger.debug(f"Found handler for {command}, calling {handler_name}")
+                            getattr(self, handler_name)(nick, userhost, params)
+                            return
+                        except Exception as e:
+                            self.logger.error(f"Error in numeric handler {handler_name}: {e}")
+                # Fall back to generic numeric handler
                 self.bot.handle_numeric(command, params)
             return
 
@@ -99,9 +148,13 @@ class MessageHandler:
             self.bot.handle_authenticate(params)
             return
 
-        handler = getattr(self, f'handle_{command.lower()}', None)
-        if handler:
-            handler(nick, userhost, params)
+        # Trigger any registered event callbacks
+        if command in self._event_bindings:
+            for callback in self._event_bindings[command]:
+                try:
+                    callback(nick, userhost, params)
+                except Exception as e:
+                    logger.error(f"Error in event callback for {command}: {e}")
 
     def handle_privmsg(self, nick, userhost, params):
         """Handle PRIVMSG command."""
@@ -145,15 +198,13 @@ class MessageHandler:
             # Add ourselves to the channel user list with current nickname
             self.bot.channel_users[channel][self.bot.current_nick] = {
                 'op': False,
-                'voice': False,
-                'account': None,
-                'host': None
+                'voice': False
             }
             self.logger.info(f"Joined channel: {channel} (as {self.bot.current_nick})")
             
             # Initialize timers for this channel
-            self.bot.last_chat_times[channel] = time.time()
-            self.bot.last_action_times[channel] = time.time()
+            self.bot.last_chat_times[channel.lower()] = time.time()
+            self.bot.last_action_times[channel.lower()] = time.time()
             
             # Server will automatically send NAMES list after JOIN
             # handle_366 (end of NAMES) will trigger the WHO request
@@ -161,17 +212,18 @@ class MessageHandler:
             # Generate and send entrance message if enabled
             if self.bot.config.get('ai_entrance', False):
                 self.logger.debug(f"Generating entrance message for {channel}")
-                entrance_prompt = self.bot.config.get('ai_prompt_entrance', 'Generate a channel entrance message')
+                entrance_prompt = self.bot.get_channel_config(channel, 'ai_prompt_entrance', 'Generate a channel entrance message')
                 entrance_msg = self.bot.ai_client.get_response(
                     entrance_prompt,
                     self.bot.current_nick,
                     channel=channel,
-                    add_to_history=True
+                    add_to_history=True  # Add entrance message to history
                 )
                 if entrance_msg:
                     # Format the entrance message to remove encapsulating quotes
                     formatted_entrance = self.bot.format_message(entrance_msg)
-                    self.bot.send_channel_message(channel, formatted_entrance)
+                    self.bot.send_channel_message(channel, formatted_entrance, add_to_history=True)  # Add to history
+                    self.logger.info(f"Sent entrance message to {channel}")
                 else:
                     self.logger.debug(f"Failed to generate entrance message for {channel}")
         else:
@@ -179,20 +231,31 @@ class MessageHandler:
             if channel in self.bot.channel_users:
                 self.bot.channel_users[channel][nick] = {
                     'op': False,
-                    'voice': False,
-                    'account': None,
-                    'host': userhost
+                    'voice': False
                 }
                 # Request WHOX info just for this user
                 # %tnuhiraf gives us: channel, nick, user, host, ip, realname, account, flags
                 self.bot.send_raw(f"WHO {nick} %tnuhiraf")
                 self.logger.debug(f"Added {nick} to {channel} users")
         
-        # Track user info
-        if nick not in self.bot.users:
-            self.bot.users[nick] = {'host': userhost}
-        elif not self.bot.users[nick].get('host'):
-            self.bot.users[nick]['host'] = userhost
+        # Track user info from JOIN
+        if userhost and "!" in userhost and "@" in userhost:
+            ident, host = userhost.split("@", 1)
+            if nick not in self.bot.users:
+                self.bot.users[nick] = {
+                    'ident': ident,
+                    'host': host,
+                    'ip': None,
+                    'account': None,
+                    'realname': None,  # Will be updated by WHO/WHOX response
+                    'away': False,     # Assume not away until WHO/WHOX updates
+                    'oper': False      # Assume not oper until WHO/WHOX updates
+                }
+            elif not self.bot.users[nick].get('host'):
+                self.bot.users[nick].update({
+                    'ident': ident,
+                    'host': host
+                })
 
     def handle_part(self, nick, userhost, params):
         """Handle PART command."""
@@ -232,8 +295,9 @@ class MessageHandler:
         
         # Update global users list
         if nick in self.bot.users:
+            # Preserve all user data including new fields
             self.bot.users[new_nick] = self.bot.users.pop(nick)
-            self.logger.debug(f"User {nick} changed nick to {new_nick}")
+            self.logger.debug(f"User {nick} changed nick to {new_nick} - Data: {self.bot.users[new_nick]}")
 
     def handle_mode(self, nick, userhost, params):
         """Handle MODE command."""
@@ -287,9 +351,7 @@ class MessageHandler:
                 if n:  # Only add if we have a nickname after stripping prefixes
                     self.bot.channel_users[channel][n] = {
                         'op': '@' in prefix,
-                        'voice': '+' in prefix,
-                        'account': None,
-                        'host': None
+                        'voice': '+' in prefix
                     }
                     self.logger.debug(f"NAMES: Added user {n} to {channel} with prefix '{prefix}', data: {self.bot.channel_users[channel][n]}")
             
@@ -304,14 +366,14 @@ class MessageHandler:
             parts = params.split()
             if len(parts) >= 2:
                 channel = parts[1]  # Channel is the second parameter
-                self.logger.debug(f"End of NAMES for {channel} - Raw params: {params}")
+                self.logger.debug(f"End of NAMES for {channel}")
                 self.logger.debug(f"Sending WHO request to get full user info")
                 # Send WHO request with WHOX format to get complete user info
                 # %tnuhiraf gives us: channel, nick, user, host, ip, realname, account, flags
                 self.bot.send_raw(f"WHO {channel} %tnuhiraf")
                 self.logger.debug(f"Current users before WHO: {', '.join(sorted(self.bot.channel_users.get(channel, {}).keys()))}")
         except Exception as e:
-            self.logger.error(f"Error processing end of NAMES: {e} - Raw params: {params}")
+            self.logger.error(f"Error processing end of NAMES: {e}")
             return
 
     def handle_352(self, nick, userhost, params):
@@ -325,6 +387,13 @@ class MessageHandler:
             nick = parts[4]
             status = parts[5]
             
+            # Get realname (everything after the :)
+            realname = ' '.join(parts[7:]).lstrip(':')
+            
+            # Parse status flags
+            away = 'G' in status  # G = Gone/Away, H = Here
+            oper = '*' in status  # * indicates server operator
+            
             if channel in self.bot.channel_users:
                 # Update or create user entry
                 if nick not in self.bot.channel_users[channel]:
@@ -335,41 +404,93 @@ class MessageHandler:
                 old_data = self.bot.channel_users[channel][nick].copy() if nick in self.bot.channel_users[channel] else {}
                 self.bot.channel_users[channel][nick].update({
                     'op': '@' in status,
-                    'voice': '+' in status,
-                    'host': f"{ident}@{host}",
-                    'account': None  # Will be updated by 354 response if account is logged in
+                    'voice': '+' in status
                 })
                 
+                # Update global user info
+                if nick not in self.bot.users:
+                    self.bot.users[nick] = {
+                        'ident': ident,
+                        'host': host,
+                        'ip': None,  # Standard WHO doesn't provide IP
+                        'account': None,
+                        'realname': realname,
+                        'away': away,
+                        'oper': oper
+                    }
+                else:
+                    self.bot.users[nick].update({
+                        'ident': ident,
+                        'host': host,
+                        'realname': realname,
+                        'away': away,
+                        'oper': oper
+                    })
+                
                 self.logger.debug(f"WHO: Updated {nick} in {channel} - Old data: {old_data}, New data: {self.bot.channel_users[channel][nick]}")
-                self.logger.debug(f"WHO response - Current users in {channel}: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+                self.logger.debug(f"WHO: Global user data for {nick}: {self.bot.users[nick]}")
 
     def handle_354(self, nick, userhost, params):
         """Handle WHOX response (numeric 354) for account information."""
-        # WHOX response format: <channel> <nick> <user> <host> <ip> <realname> <account> <flags>
+        # WHOX response format from Undernet:
+        # <target/botnick> <dummy> <user> <host> <ip> <nick> <status+flags> <account> :<realname>
         parts = params.split()
         if len(parts) >= 8:
-            channel = parts[0]
-            user_nick = parts[1]
-            ident = parts[2]
-            host = parts[3]
-            account = parts[6] if parts[6] != '0' else None
-            flags = parts[7]
+            # Note: parts[0] is our bot's nick, not the channel
+            user_nick = parts[5]  # Nick is in position 5
+            ident = parts[2]      # Username/ident
+            ip = parts[3]         # IP address is in position 3
+            host = parts[4]       # Hostname is in position 4
+            account = parts[7]    # Account is in position 7
+            flags = parts[6]      # Status+flags in position 6
             
-            if channel in self.bot.channel_users:
-                if user_nick not in self.bot.channel_users[channel]:
-                    self.logger.debug(f"WHOX: Creating new entry for {user_nick} in {channel}")
-                    self.bot.channel_users[channel][user_nick] = {}
-                
-                old_data = self.bot.channel_users[channel][user_nick].copy() if user_nick in self.bot.channel_users[channel] else {}
-                self.bot.channel_users[channel][user_nick].update({
-                    'op': '@' in flags or '*' in flags,
-                    'voice': '+' in flags,
-                    'host': f"{ident}@{host}",
-                    'account': account
+            # Get realname (everything after the account field)
+            realname = ' '.join(parts[8:]).lstrip(':') if len(parts) > 8 else ''
+            
+            # Parse status flags
+            away = 'G' in flags   # G = Gone/Away, H = Here
+            oper = '*' in flags   # * indicates server operator
+            
+            self.logger.debug(f"WHOX parsed data - Nick: {user_nick}, Ident: {ident}, Host: {host}, IP: {ip}, Account: {account}, Flags: {flags}, Realname: {realname}")
+            
+            # Convert '0' to None for no account
+            account = None if account == '0' else account
+            
+            # Update global user info first
+            if user_nick not in self.bot.users:
+                self.bot.users[user_nick] = {
+                    'ident': ident,
+                    'host': host,
+                    'ip': ip,
+                    'account': account,
+                    'realname': realname,
+                    'away': away,
+                    'oper': oper
+                }
+            else:
+                self.bot.users[user_nick].update({
+                    'ident': ident,
+                    'host': host,
+                    'ip': ip,
+                    'account': account,
+                    'realname': realname,
+                    'away': away,
+                    'oper': oper
                 })
-                
-                self.logger.debug(f"WHOX: Updated {user_nick} in {channel} - Old data: {old_data}, New data: {self.bot.channel_users[channel][user_nick]}")
-                self.logger.debug(f"WHOX response - Current users in {channel}: {', '.join(sorted(self.bot.channel_users[channel].keys()))}")
+            
+            # Update user in all channels they're in
+            for channel, users in self.bot.channel_users.items():
+                if user_nick in users:
+                    old_data = users[user_nick].copy()
+                    users[user_nick].update({
+                        'op': '@' in flags or '*' in flags,
+                        'voice': '+' in flags
+                    })
+                    self.logger.debug(f"WHOX: New channel data for {user_nick} in {channel}: {users[user_nick]}")
+            
+            self.logger.debug(f"WHOX: Global user data for {user_nick}: {self.bot.users[user_nick]}")
+        else:
+            self.logger.debug(f"WHOX: Insufficient parts in response ({len(parts)} < 8)")
 
     def handle_315(self, nick, userhost, params):
         """Handle end of WHO list."""
@@ -425,6 +546,54 @@ class MessageHandler:
                     del self.bot.channel_users[channel]
                     self.logger.info(f"Bot was kicked from {channel}")
 
+    def _handle_command(self, command_name, nick, channel, args):
+        """Handle a bot command.
+        
+        Args:
+            command_name: The name of the command to execute
+            nick: The nickname of the user who issued the command
+            channel: The channel where the command was issued
+            args: List of command arguments
+        """
+        command = self.commands.get(command_name)
+        if not command:
+            return
+            
+        try:
+            # Get command configuration
+            cmd_config = self.bot.get_channel_command_config(channel, command_name)
+            
+            # Get user info including host and account
+            user_info = self.bot.users.get(nick, {})
+            ident = user_info.get('ident', '')
+            host = user_info.get('host', '')
+            userhost = f"{ident}@{host}" if ident and host else None
+            
+            # Get channel-specific user info
+            channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
+            
+            # Check permissions once
+            if not self._check_command_permissions(nick, channel, cmd_config):
+                required = cmd_config.get('requires', 'any')
+                if required == 'admin':
+                    self.bot.send_channel_message(channel, "This command requires admin privileges.")
+                elif required == 'op':
+                    self.bot.send_channel_message(channel, "This command requires channel operator privileges.")
+                elif required == 'voice':
+                    self.bot.send_channel_message(channel, "This command requires voice privileges.")
+                return
+                    
+            # Execute command
+            response = command.execute(nick, channel, args)
+            
+            # Handle response
+            if response:
+                self.bot.send_channel_message(channel, response)
+                
+        except Exception as e:
+            self.logger.error(f"Error executing command {command_name}: {e}")
+            self.bot.send_channel_message(channel, f"Error executing command: {e}")
+            
     def _check_command_permissions(self, nick, channel, cmd_config):
         """Check if a user has permission to use a command.
         
@@ -436,10 +605,11 @@ class MessageHandler:
         Returns:
             bool: True if user has permission, False otherwise
         """
-        # Get user info including host
+        # Get user info including host and account
         user_info = self.bot.users.get(nick, {})
         if not user_info:
             self.logger.debug(f"No user info found for {nick}")
+            return False
             
         # Get channel-specific user info
         channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
@@ -447,50 +617,30 @@ class MessageHandler:
         # Get required permission level
         required = cmd_config.get('requires', 'any').lower()
         
+        # Construct userhost from ident and host
+        ident = user_info.get('ident', '')
+        host = user_info.get('host', '')
+        userhost = f"{ident}@{host}" if ident and host else None
+        
         # Check if user is admin (admins can use any command)
-        if user_info.get('host') and self.bot.permissions.is_admin(nick, user_info['host']):
+        if userhost and self.bot.permissions.is_admin(nick, userhost):
+            self.logger.debug(f"User {nick} ({userhost}) is admin - command permitted")
             return True
             
         # Handle different permission levels
         if required == 'admin':
-            self.logger.info(f"Command denied: {nick} tried to use admin-only command in {channel}")
             return False
             
         elif required == 'op':
             if not channel_info.get('op', False):
-                self.logger.info(f"Command denied: {nick} tried to use op-required command in {channel} without op status")
                 return False
                 
         elif required == 'voice':
             if not (channel_info.get('voice', False) or channel_info.get('op', False)):
-                self.logger.info(f"Command denied: {nick} tried to use voice-required command in {channel} without voice/op status")
                 return False
                 
         # 'any' permission level always returns True
         return True
-
-    def _handle_command(self, command, nick, channel, args):
-        """Handle a command."""
-        # Get command config
-        cmd_config = self.bot.get_channel_command_config(channel, command)
-        
-        # Check permissions
-        if not self._check_command_permissions(nick, channel, cmd_config):
-            return
-            
-        # Handle commands
-        if command in self.commands:
-            response = self.commands[command].execute(nick, channel, args)
-            if response:
-                # Check if response is a tuple with add_to_history flag
-                if isinstance(response, tuple):
-                    message, add_to_history = response
-                    self.bot.send_channel_message(channel, message, add_to_history=add_to_history)
-                else:
-                    # For backward compatibility with commands that haven't been updated
-                    self.bot.send_channel_message(channel, response, add_to_history=False)
-        else:
-            self.bot.send_channel_message(channel, f"Unknown command: {command}")
 
     def _parse_prefix(self, prefix):
         """Parse IRC prefix into nick and userhost."""
@@ -520,3 +670,10 @@ class MessageHandler:
                 self.logger.error(f"Error in channel check loop: {e}")
                 
             time.sleep(30)  # Check every 30 seconds 
+
+    def start_channel_check(self):
+        """Start the channel check thread if not already running."""
+        if not self.channel_check_thread or not self.channel_check_thread.is_alive():
+            self.channel_check_thread = threading.Thread(target=self._check_channels_loop, daemon=True)
+            self.channel_check_thread.start()
+            self.logger.debug("Started channel check thread") 

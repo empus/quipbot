@@ -26,8 +26,8 @@ post_connect_commands:
 # SASL Authentication (optional)
 sasl:
   enabled: false
-  username: "quip"  # SASL username (usually same as nick)
-  password: ""      # SASL password
+  username: "quip"    # SASL username (usually same as nick)
+  password: ""        # SASL password
   mechanism: "PLAIN"  # Currently only PLAIN is supported
 
 # Command prefix (e.g., !, ., @, $, etc)
@@ -39,10 +39,11 @@ ignore_regex:
   - "^[cC]\\s"    # Ignore messages starting with c followed by a space
 
 # Bot administrators (can use all commands)
+# Supports network accounts or nick!ident@host wildcards (e.g. "*!sid479710@*.irccloud.com")
 admins:
-  - "sid479710@*.irccloud.com"    # Example format
-  - "Empus"                       # Network account format
-  - "empus@172.16.164.*"
+  - "*!sid479710@*.irccloud.com"    # Example format
+  - "Empus"                         # Network account format
+  - "*!empus@172.16.164.*"
 
 # List of IRC servers to connect to
 servers:
@@ -181,7 +182,7 @@ ai_prompt_entrance: |
 ai_prompt_default: |
   You are Quip, a witty and sarcastic person who enjoys joking around with IRC users. 
   You occasionally toss out playful insults or comedic remarks. Don't admit that you 
-  are an AI, just act like a human.  If someone mentions your name, use their namme too.
+  are an AI, just act like a human. Always respond to the person using their exact nickname.
   Keep responses brief, 1-2 sentences.
 
 # AI prompt for generating channel topics
@@ -250,6 +251,8 @@ commands:
     requires: "admin"
   reload:
     requires: "admin"
+  rehash:
+    requires: "admin"
   die:
     requires: "admin"
   jump:
@@ -261,8 +264,9 @@ commands:
   
 
 # Logging configuration
-log_level: "DEBUG"   # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level: "DEBUG"    # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
 log_file: "quip.log"  # Log file name
+log_raw: false        # Log raw IRC traffic?
 
 # General bot configuration
 pid_file: "quip.pid"  # Path to PID file when running as daemon 

@@ -1,6 +1,8 @@
-"""Reload command for QuipBot."""
+"""Reload command for QuipBot - reloads both configuration and code modules."""
 
 from . import Command
+from ..utils.reloader import ModuleReloader
+import yaml
 
 class ReloadCommand(Command):
     @property
@@ -10,10 +12,33 @@ class ReloadCommand(Command):
     @property
     def help(self):
         prefix = self.bot.config.get('cmd_prefix', '!')
-        return f"Reload the bot configuration. Usage: {prefix}reload"
+        return f"Reload both configuration and code modules. Usage: {prefix}reload"
 
     def execute(self, nick, channel, args):
-        """Execute the reload command."""
-        if self.bot.reload_config():
-            return "Configuration reloaded successfully."
-        return "Failed to reload configuration." 
+        """Execute reload command."""
+        try:
+            # Preserve current state
+            self.bot.logger.info("Preserving current state...")
+            self.bot.reloader.preserve_state(self.bot)
+            preserved_state = self.bot.reloader.preserved_state
+            
+            # Reload configuration first
+            self.bot.logger.info("Reloading configuration...")
+            if not self.bot.reload_config():
+                return "Failed to reload configuration. Check logs for details."
+            
+            # Then reload code modules
+            self.bot.logger.info("Reloading code modules...")
+            if not self.bot.reloader.reload_modules(self.bot):
+                return "Failed to reload code modules. Check logs for details."
+            
+            # Finally restore state
+            self.bot.logger.info("Restoring preserved state...")
+            if not self.bot.reloader.restore_state(self.bot, preserved_state):
+                return "Failed to restore bot state after reload. Check logs for details."
+            
+            return "Successfully reloaded configuration and code modules"
+            
+        except Exception as e:
+            self.bot.logger.error(f"Error during reload: {e}", exc_info=True)
+            return f"Error during reload: {e}" 

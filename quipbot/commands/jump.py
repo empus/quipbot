@@ -20,10 +20,6 @@ class JumpCommand(commands.Command):
 
     def execute(self, nick, channel, args):
         """Execute the jump command."""
-        # Check if user is admin
-        if not self.bot.permissions.is_admin(nick, None):
-            return "This command is only available to bot administrators."
-
         # Get target server (ensure args is a list)
         args = args or []
         target_server = args[0] if args else None

@@ -2,7 +2,22 @@
 
 import logging
 import sys
+import os
 from datetime import datetime
+
+# Add custom RAW level
+RAW = 5  # Lower than DEBUG (10)
+logging.addLevelName(RAW, 'RAW')
+
+# Ensure RAW level is preserved during reloads
+def raw(self, msg, *args, **kwargs):
+    """Log 'msg % args' with severity 'RAW'."""
+    if self.isEnabledFor(RAW):
+        self._log(RAW, msg, args, **kwargs)
+
+# Add raw method to Logger class if not already present
+if not hasattr(logging.Logger, 'raw'):
+    logging.Logger.raw = raw
 
 # ANSI color codes
 COLORS = {
@@ -26,6 +41,10 @@ COLORS = {
 
 # Log level colors and emojis
 LEVEL_STYLES = {
+    'RAW': {
+        'color': COLORS['BRIGHT_WHITE'],
+        'emoji': '📡'
+    },
     'DEBUG': {
         'color': COLORS['BLUE'],
         'emoji': '🔍'
@@ -178,6 +197,10 @@ class ColoredFormatter(logging.Formatter):
         # Format the message with emoji
         record_copy.msg = f"{emoji}  {color}{record_copy.msg}{COLORS['RESET']}"
         
+        # Add color to ERROR level logs
+        if record_copy.levelno == logging.ERROR:
+            record_copy.msg = f"{COLORS['RED']}{record_copy.msg}{COLORS['RESET']}"
+        
         return super().format(record_copy)
 
 def setup_logger(name, config):
@@ -186,6 +209,11 @@ def setup_logger(name, config):
     
     # Set log level from config
     log_level = getattr(logging, config.get('log_level', 'INFO').upper(), logging.INFO)
+    
+    # Enable RAW level if configured
+    if config.get('log_raw', False):
+        log_level = min(log_level, RAW)
+        
     logger.setLevel(log_level)
     
     # Remove any existing handlers
@@ -203,5 +231,12 @@ def setup_logger(name, config):
     console_formatter = ColoredFormatter(use_colors=True)
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
+    
+    # Add raw method to logger
+    def raw(msg, *args, **kwargs):
+        if logger.isEnabledFor(RAW):
+            logger._log(RAW, msg, args, **kwargs)
+    
+    logger.raw = raw
     
     return logger 

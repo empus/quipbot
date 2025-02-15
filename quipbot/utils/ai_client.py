@@ -18,10 +18,16 @@ class AIClient:
         """Initialize AI client with configuration."""
         self.config = config
         self.chat_history = defaultdict(list)  # {channel: [messages]}
+        self.bot = None  # Will be set by IRCBot after initialization
+        self.logger = logging.getLogger('QuipBot')
         # Initialize with global config - will be overridden per channel as needed
         self.default_prompt = config['ai_prompt_default']
         self.model = config['ai_model']
         logger.info(f"Initialized AI client with model {self.model}")  # Add logging
+
+    def set_bot(self, bot):
+        """Set the bot instance reference."""
+        self.bot = bot
 
     def _get_channel_config(self, channel, key, default=None):
         """Get channel-specific config value."""
@@ -56,24 +62,20 @@ class AIClient:
         )
 
     def _get_nicklist_context(self, channel):
-        """Get nicklist context if enabled for the channel."""
-        if not self._get_channel_config(channel, 'ai_nicklist', False):
-            logger.debug(f"Nicklist disabled for channel {channel}")
-            return ""
-            
-        if not hasattr(self, 'bot') or not self.bot:
-            logger.warning("Bot reference not set in AI client")
+        """Get channel nicklist context for AI prompts."""
+        if not self.config.get('ai_nicklist', True):
             return ""
             
         channel_users = self.bot.channel_users.get(channel, {})
         if not channel_users:
-            logger.debug(f"No users found in channel {channel}")
             return ""
             
-        nicklist = sorted(channel_users.keys())  # Sort for consistent output
-        nicklist_context = f"\nThis channel {channel} has users: {', '.join(nicklist)}"
-        logger.debug(f"Generated nicklist context: {nicklist_context}")
-        return nicklist_context
+        # Get sorted list of nicks (excluding the bot)
+        nicklist = sorted(nick for nick in channel_users.keys() if nick != self.bot.current_nick)
+        if not nicklist:
+            return ""
+            
+        return f"\nCurrent users in channel: {', '.join(nicklist)}"
 
     def _get_prompt_with_nicklist(self, prompt_key, prompt_default, channel):
         """Get channel-specific prompt with nicklist context if enabled."""

@@ -14,6 +14,7 @@ from ..utils.tokenbucket import TokenBucket
 from ..utils.logger import setup_logger
 import yaml
 import re
+from ..utils.reloader import ModuleReloader
 
 class IRCBot:
     def __init__(self, config, config_file='config.yaml'):
@@ -43,15 +44,17 @@ class IRCBot:
         
         self.current_server_index = 0
         self.sock = None
-        self.connected = False
         self.running = True  # Flag to control bot lifecycle
         
         # Initialize components
         self.permissions = PermissionManager(config)
+        self.permissions.set_bot(self)  # Set bot reference
         self.ai_client = AIClient(config)
-        self.ai_client.bot = self  # Add reference to bot instance
+        self.ai_client.set_bot(self)  # Set bot reference
         self.floodpro = FloodProtection(config)
+        self.floodpro.logger = self.logger  # Set logger reference
         self.handler = MessageHandler(self)
+        self.reloader = ModuleReloader()  # Initialize reloader
         
         # Initialize rate limiter
         burst_size = config.get('irc_burst_size', 4)
@@ -71,6 +74,10 @@ class IRCBot:
         # Conversation continuation tracking
         self.last_trigger_times = {}  # {channel: timestamp}
         self.conversation_timers = {}  # {channel: next_response_time}
+        
+        # Bot state flags
+        self.reload_paused = False  # Controls temporary thread pausing for reloads
+        self.connected = False
 
     def _sasl_plain_auth(self):
         """Perform SASL PLAIN authentication."""
@@ -155,9 +162,15 @@ class IRCBot:
                 if not self.sasl_config.get('enabled'):
                     self.send_raw("CAP END")
                 
-                threading.Thread(target=self.listen_loop, daemon=True).start()
+                # Set connected flag and start listen thread
                 self.connected = True
                 self.logger.info("Connected successfully")
+                
+                # Start listen thread
+                listen_thread = threading.Thread(target=self.listen_loop, daemon=True)
+                listen_thread.start()
+                
+                return  # Successfully connected, exit the loop
                 
             except Exception as e:
                 self.logger.error(f"Failed to connect to {self.host}:{self.port} - {e}")
@@ -167,6 +180,7 @@ class IRCBot:
                     except:
                         pass
                 self.sock = None
+                self.connected = False  # Ensure connected flag is False on failure
                 self.current_server_index = (self.current_server_index + 1) % len(self.servers)
                 time.sleep(5)  # Wait before trying the next server
 
@@ -232,27 +246,32 @@ class IRCBot:
         elif numeric == "907":  # ERR_SASLALREADY
             self.logger.warning("SASL authentication failed: already authenticated")
             self.send_raw("CAP END")
-        elif numeric in ("001", "376", "422"):  # Welcome/MOTD
-            self.registration_complete = True
-            # Set user mode if configured
-            usermode = self.config.get('usermode')
-            if usermode:
-                self.logger.debug(f"Setting user mode: {usermode}")
-                self.send_raw(f"MODE {self.current_nick} {usermode}")
-            
-            # Send post-connect commands
-            post_connect_commands = self.config.get('post_connect_commands', [])
-            if post_connect_commands:
-                self.logger.debug("Sending post-connect commands")
-                for cmd in post_connect_commands:
-                    # Replace variables in command
-                    cmd = cmd.replace('$nick', self.current_nick)
-                    self.logger.debug(f"Sending command: {cmd}")
-                    self.send_raw(cmd)
-                    time.sleep(1)  # Add delay between commands to prevent flood
-            
-            # Join channels after commands are sent
-            self.join_channels()
+        elif numeric == "001":  # RPL_WELCOME - Start of registration
+            if not self.registration_complete:
+                self.registration_complete = True
+                # Set user mode if configured
+                usermode = self.config.get('usermode')
+                if usermode:
+                    self.logger.debug(f"Setting user mode: {usermode}")
+                    self.send_raw(f"MODE {self.current_nick} {usermode}")
+        elif numeric in ("376", "422"):  # End of MOTD/MOTD Missing - End of registration
+            if self.registration_complete:
+                # Send post-connect commands
+                post_connect_commands = self.config.get('post_connect_commands', [])
+                if post_connect_commands:
+                    self.logger.debug("Sending post-connect commands")
+                    for cmd in post_connect_commands:
+                        # Replace variables in command
+                        cmd = cmd.replace('$nick', self.current_nick)
+                        self.logger.debug(f"Sending command: {cmd}")
+                        self.send_raw(cmd)
+                        time.sleep(1)  # Add delay between commands to prevent flood
+                
+                # Start channel check thread now that we're registered
+                self.handler.start_channel_check()
+                
+                # Join channels after commands are sent
+                self.join_channels()
 
     def reconnect(self):
         """Reconnect to the IRC server."""
@@ -283,7 +302,7 @@ class IRCBot:
 
     def send_raw(self, message):
         """Send raw message to the IRC server."""
-        self.logger.debug(f">>> {message}")
+        self.logger.raw(f">>> {message}")
         try:
             # Get token from rate limiter
             wait_time = self.rate_limiter.get_token()
@@ -371,18 +390,42 @@ class IRCBot:
 
     def listen_loop(self):
         """Main listening loop for IRC messages."""
+        thread = threading.current_thread()
+        thread.is_processing = False
         buffer = ""
-        while True:
+        
+        while self.running:  # Check if bot should keep running
             try:
-                data = self.sock.recv(4096)
-                if not data:
-                    self.logger.warning("Connection lost")
-                    self.connected = False
-                    self.reconnect()
-                    break
+                # Skip processing if paused for reload
+                if self.reload_paused:
+                    thread.is_processing = False
+                    self.logger.debug(f"Listen loop paused, processing: {thread.is_processing}")
+                    time.sleep(0.1)
+                    continue
+                    
+                # Set processing flag before any work
+                thread.is_processing = True
+                
+                # Use non-blocking recv with timeout
+                self.sock.settimeout(0.1)  # 100ms timeout
+                try:
+                    data = self.sock.recv(4096)
+                    if not data:
+                        self.logger.warning("Connection lost")
+                        self.connected = False
+                        self.reconnect()
+                        break
+                except socket.timeout:
+                    # No data available, check pause state
+                    thread.is_processing = False
+                    continue
+                except socket.error:
+                    thread.is_processing = False
+                    time.sleep(0.1)
+                    continue
 
                 buffer += data.decode('utf-8', errors='ignore')
-                while '\r\n' in buffer:
+                while '\r\n' in buffer and not self.reload_paused:
                     line, buffer = buffer.split('\r\n', 1)
                     
                     # Log numeric responses that might indicate errors
@@ -395,26 +438,49 @@ class IRCBot:
                                 self.logger.error(f"IRC Error: {line}")
                             
                     self.handler.handle_line(line)
+                    # Check pause state after each line
+                    if self.reload_paused:
+                        break
                     
-            except socket.error:
-                time.sleep(0.1)
             except Exception as e:
                 self.logger.error(f"Error in listen loop: {e}")
+                thread.is_processing = False
                 time.sleep(1)
+            finally:
+                # Ensure processing flag is cleared if we're paused
+                if self.reload_paused:
+                    thread.is_processing = False
 
     def random_actions_loop(self):
         """Handle random actions on timers."""
-        while True:
+        thread = threading.current_thread()
+        thread.is_processing = False
+        
+        while self.running:  # Check if bot should keep running
             try:
+                # Skip processing if paused for reload
+                if self.reload_paused:
+                    thread.is_processing = False
+                    self.logger.debug(f"Random actions loop paused, processing: {thread.is_processing}")
+                    time.sleep(0.1)
+                    continue
+                    
+                # Set processing flag before any work
+                thread.is_processing = True
                 now = time.time()
                 next_check = now + 60  # Default to 60 seconds between checks
                 
                 # Process each channel independently
                 for channel in self.channels:
+                    # Check pause state between channels
+                    if self.reload_paused:
+                        thread.is_processing = False
+                        break
+                        
                     channel_name = channel['name']
                     channel_lower = channel_name.lower()
                     
-                    # Skip if we're not in the channel - let the handler's check_channels_loop handle this
+                    # Skip if we're not in the channel
                     if not self.is_in_channel(channel_name):
                         continue
 
@@ -422,21 +488,44 @@ class IRCBot:
                     if self.is_sleeping(channel_name):
                         continue
                     
-                    # Check for active conversation
+                    # Skip if we were the last to speak
+                    if self.was_last_speaker(channel_name):
+                        self.logger.debug(f"Skipping random actions in {channel_name} - bot was last speaker")
+                        continue
+                    
+                    # Check for idle chat
+                    idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
+                    if idle_chat_interval > 0:
+                        last_chat = self.last_chat_times.get(channel_lower, 0)
+                        idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', idle_chat_interval)
+                        
+                        if (now - last_chat) >= idle_chat_time:
+                            self._random_chat(channel_name)
+                            self.last_chat_times[channel_lower] = now
+                            
+                    # Check for random actions
+                    random_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
+                    if random_action_interval > 0:
+                        last_action = self.last_action_times.get(channel_lower, 0)
+                        
+                        if (now - last_action) >= random_action_interval:
+                            self._random_action(channel_name)
+                            self.last_action_times[channel_lower] = now
+                    
+                    # Process conversation continuation
                     if self._should_continue_conversation(channel_name):
-                        # Get next scheduled response time
+                        if self.reload_paused:
+                            thread.is_processing = False
+                            break
+                            
                         next_response_time = self.conversation_timers.get(channel_lower, 0)
                         time_until_response = next_response_time - now
                         
-                        # If it's time for next response and someone else has spoken since our last message
-                        if time_until_response <= 0 and not self.was_last_speaker(channel_name):
+                        if time_until_response <= 0:
                             self.logger.debug(f"Timer triggered for {channel_name} - generating response")
-                            # Get the most recent message from chat history
                             channel_history = self.ai_client.chat_history.get(channel_lower, [])
                             if channel_history:
                                 last_message = channel_history[-1]
-                                self.logger.debug(f"Continuing conversation from: {last_message}")
-                                
                                 response = self.ai_client.get_response(
                                     last_message,
                                     self.current_nick,
@@ -444,78 +533,37 @@ class IRCBot:
                                     add_to_history=True,
                                     include_history=True
                                 )
+                                
                                 if response:
                                     self.send_channel_message(channel_name, response)
-                                    # send_channel_message will schedule next response
                                 else:
                                     self._schedule_next_response(channel_name)
                             else:
                                 self._schedule_next_response(channel_name)
-                        elif time_until_response <= 0:
-                            self.logger.debug(f"Timer expired but bot was last speaker in {channel_name}, rescheduling")
-                            self._schedule_next_response(channel_name)
-                        
-                        # Update next check time based on response timer
+                                
+                        # Update next check time
                         next_check = min(next_check, now + max(0.1, time_until_response))
-                        continue
-                    else:
-                        # Conversation ended or not active, only clear conversation timers
-                        if channel_lower in self.conversation_timers:
-                            self.logger.debug(f"Conversation ended in {channel_name}, clearing conversation timers")
-                            del self.conversation_timers[channel_lower]
                     
-                    # Handle idle chat and random actions for non-active conversations
-                    if channel_name not in self.last_chat_times:
-                        self.last_chat_times[channel_name] = now
-                    if channel_name not in self.last_action_times:
-                        self.last_action_times[channel_name] = now
-                    if channel_name not in self.last_check_times:
-                        self.last_check_times[channel_name] = now
-                    
-                    # Check idle chat interval
-                    idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
-                    if idle_chat_interval > 0:
-                        # Get required idle time before chatting
-                        idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', idle_chat_interval)
-                        
-                        # Calculate time since last check and last chat
-                        time_since_last_check = now - self.last_check_times[channel_name]
-                        time_since_last_chat = now - self.last_chat_times[channel_name]
-                        
-                        # Only check if we've waited the interval
-                        if time_since_last_check >= idle_chat_interval:
-                            if time_since_last_chat >= idle_chat_time:
-                                # Skip idle chat if we were the last to speak
-                                if not self.was_last_speaker(channel_name):
-                                    self.logger.debug(f"Attempting idle chat in {channel_name} - Channel idle for {time_since_last_chat:.1f}s")
-                                    self._random_chat(channel_name)
-                                else:
-                                    self.logger.debug(f"Skipping idle chat in {channel_name} - bot was last speaker")
-                            else:
-                                self.logger.debug(f"Skipping idle chat in {channel_name} - channel not idle long enough (idle for {time_since_last_chat:.1f}s, need {idle_chat_time}s)")
-                            self.last_check_times[channel_name] = now
-                            
-                        # Schedule next check based on interval
-                        time_until_next_check = idle_chat_interval - time_since_last_check
-                        next_check = min(next_check, now + time_until_next_check)
-                    
-                    # Check random action interval
-                    random_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
-                    if random_action_interval > 0:
-                        time_until_action = (self.last_action_times[channel_name] + random_action_interval) - now
-                        if time_until_action <= 0:
-                            self._random_action(channel_name)
-                            self.last_action_times[channel_name] = now
-                        else:
-                            next_check = min(next_check, now + time_until_action)
+                # Calculate sleep time with more frequent pause checks
+                sleep_time = max(0.1, min(60, next_check - time.time()))
                 
-                # Calculate how long to sleep until next check is needed
-                sleep_time = max(0.1, next_check - time.time())  # Ensure minimum 0.1s sleep
-                time.sleep(sleep_time)
+                # Break sleep into smaller chunks to check pause state
+                end_time = time.time() + sleep_time
+                while time.time() < end_time and not self.reload_paused:
+                    time.sleep(0.1)
+                    
+                if self.reload_paused:
+                    thread.is_processing = False
+                    break
                     
             except Exception as e:
                 self.logger.error(f"Error in random actions loop: {e}")
+                thread.is_processing = False
                 time.sleep(1)
+            finally:
+                # Ensure processing flag is cleared if we're paused
+                if self.reload_paused:
+                    thread.is_processing = False
 
     def is_in_channel(self, channel):
         """Check if the bot is currently in a channel."""
@@ -526,8 +574,14 @@ class IRCBot:
         is_in = any(ch.lower() == channel_lower and self.current_nick in self.channel_users[ch] 
                    for ch in self.channel_users.keys())
         
-        if not is_in:
+        # Only log channel presence check once per minute per channel
+        now = time.time()
+        last_check_key = f"last_presence_check_{channel_lower}"
+        last_check = getattr(self, last_check_key, 0)
+        
+        if not is_in and (now - last_check) >= 60:
             self.logger.debug(f"Not in channel {channel} (current_nick: {self.current_nick})")
+            setattr(self, last_check_key, now)
         
         return is_in
 
@@ -714,18 +768,6 @@ class IRCBot:
         """Generate and perform a random kick."""
         reason = self.ai_client.generate_kick_reason(self.config['ai_prompt_kick'])
 
-    def reload_config(self):
-        """Reload configuration from file."""
-        try:
-            with open(self.config_file, 'r') as f:
-                new_config = yaml.safe_load(f)
-            self.update_config(new_config)
-            self.logger.info(f"Successfully reloaded config from {self.config_file}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error reloading config from {self.config_file}: {e}")
-            return False
-
     def _should_continue_conversation(self, channel):
         """Check if we should continue participating in conversation for this channel."""
         # Get channel-specific settings
@@ -824,6 +866,13 @@ class IRCBot:
             self.logger.debug(f"Skipping AI processing in {channel} - bot is sleeping")
             return
 
+        # Skip if we were the last to speak (unless it's a direct message)
+        message_lower = message.lower()
+        is_direct = message_lower.startswith(f"{self.current_nick.lower()}:")
+        if not is_direct and self.was_last_speaker(channel):
+            self.logger.debug(f"Skipping response in {channel} - bot was last speaker")
+            return
+
         # Get AI response delay setting
         ai_delay_range = self.get_channel_config(channel, 'ai_delay', [0, 0])
         if isinstance(ai_delay_range, (int, float)):  # Handle old config format
@@ -836,8 +885,7 @@ class IRCBot:
             ai_delay = random.uniform(ai_delay_range[0], ai_delay_range[1])
 
         # Process direct messages to the bot (nick: message)
-        message_lower = message.lower()
-        if message_lower.startswith(f"{self.current_nick.lower()}:"):
+        if is_direct:
             # Direct messages always get a response and update trigger time
             self._update_trigger_time(channel_lower)
             
@@ -864,19 +912,11 @@ class IRCBot:
         
         if ai_mention:
             # First check for direct prefix which we already handled
-            if message_lower.startswith(f"{self.current_nick.lower()}:"):
+            if is_direct:
                 return
                 
-            # Split message into words and check if any word matches the bot's nick
-            # Add a space before and after the message to handle edge cases
-            message_with_spaces = f" {message_lower} "
-            nick_lower = self.current_nick.lower()
-            
-            # Check for nickname followed by common punctuation or space
-            if f" {nick_lower}" in message_with_spaces and any(
-                message_with_spaces.find(f" {nick_lower}{p}") != -1 
-                for p in ["", " ", "!", "?", ".", ",", ";", ":", ")", "]", "}", "~"]
-            ):
+            # Check for nickname in message with more flexible matching
+            if self.current_nick.lower() in message_lower:
                 # Mentions also get a response and update trigger time
                 self._update_trigger_time(channel_lower)
                 
@@ -1144,3 +1184,14 @@ class IRCBot:
                 # Just log channel modes that don't affect user status
                 mode_char = '+' if adding else '-'
                 self.logger.debug(f"Channel mode change in {channel} by {nick}: {mode_char}{mode}")
+
+    def reload_config(self):
+        """Reload configuration from file."""
+        try:
+            with open(self.config_file, 'r') as f:
+                new_config = yaml.safe_load(f)
+            self.update_config(new_config)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to reload configuration: {e}")
+            return False

@@ -36,7 +36,8 @@ The bot supports the following commands:
 - `@sleep <mins>`: Put the bot to sleep for a specified amount of time.
 - `@wake`: Wake the bot up from sleep.
 - `@say <message>`: Speak a message to the channel.
-- `@reload`: Reload the bot's configuration.
+- `@reload`: Reload both configuration and code modules while preserving network state. See [Hot Reloading Documentation](docs/hotreload.md).
+- `@rehash`: Reload only the configuration file.
 - `@die`: Shutdown the bot.
 - `@jump [server]`: Jump to a specific server or the next server in the list.
 - `@var <variable>`: Print the value of a variable to the log.
@@ -45,6 +46,13 @@ The bot supports the following commands:
 
 
 ## Features
+
+### Hot Reloading
+- Dynamic code reloading without bot restart
+- Preserves network connections and state
+- Reloads configuration and module changes
+- Maintains chat history and user tracking
+- See [Hot Reloading Documentation](docs/hotreload.md) for details
 
 ### AI-Powered Interactions
 - Responds to direct messages (prefix with botnick:)
@@ -201,7 +209,8 @@ nvim config.yaml
 
 ## Running the Bot
 
-1. Run the bot:
+### Start
+
 ```bash
 source .venv/bin/activate
 python3 -m quipbot
@@ -257,4 +266,4 @@ Feel free to submit issues and pull requests. The bot is designed to be easily e
 
 ## License
 
-MIT License - See `LICENSE` file for details 
+MIT License - See [LICENSE](LICENSE) file for details 
