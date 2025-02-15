@@ -97,7 +97,7 @@ class InfoCommand(Command):
             
             chat_history = self.bot.get_channel_config(channel, 'chat_history', 0)
             if context_types and chat_history:
-                context_info = f"📝 **Context**: **{chat_history}** lines for " + ", ".join(context_types)
+                context_info = f"📝 **Context**: last **{chat_history}** chat lines for " + ", ".join(context_types)
                 if self.bot.get_channel_config(channel, 'ai_nicklist', False):
                     context_info += ". Nicklist is included."
                 lines.append(context_info)

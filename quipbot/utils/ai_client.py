@@ -77,7 +77,7 @@ class AIClient:
         try:
             # Get channel-specific configuration
             client = self._get_client_for_channel(channel)
-            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4o-mini')
             service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
@@ -118,7 +118,7 @@ class AIClient:
                 "max_tokens": 150,
                 "temperature": 0.8,
             }
-            self.logger.debug(f"API request payload for {channel}: {api_payload}")
+            self.logger.api(f"API request payload for {channel}: {api_payload}")
             
             self.logger.info(f"Sending API request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -169,7 +169,7 @@ class AIClient:
         """Generate a random topic."""
         try:
             client = self._get_client_for_channel(channel)
-            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4o-mini')
             service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get channel-specific topic prompt
@@ -196,7 +196,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            self.logger.debug(f"Topic API request payload for {channel}: {api_payload}")
+            self.logger.api(f"Topic API request payload for {channel}: {api_payload}")
             
             self.logger.info(f"Sending topic generation request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -213,7 +213,7 @@ class AIClient:
                 return None
                 
             client = self._get_client_for_channel(channel)
-            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4o-mini')
             service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
@@ -226,7 +226,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            self.logger.debug(f"Entrance API request payload for {channel}: {api_payload}")
+            self.logger.api(f"Entrance API request payload for {channel}: {api_payload}")
             
             self.logger.info(f"Sending entrance message request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)
@@ -239,7 +239,7 @@ class AIClient:
         """Generate a kick reason."""
         try:
             client = self._get_client_for_channel(channel)
-            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4-turbo-preview')
+            model = self.bot.get_channel_config(channel, 'ai_model', 'gpt-4o-mini')
             service = self.bot.get_channel_config(channel, 'ai_service', 'openai')
             
             # Get prompt with nicklist context
@@ -252,7 +252,7 @@ class AIClient:
                 "max_tokens": 50,
                 "temperature": 0.9,
             }
-            self.logger.debug(f"Kick API request payload for {channel}: {api_payload}")
+            self.logger.api(f"Kick API request payload for {channel}: {api_payload}")
             
             self.logger.info(f"Sending kick reason request to {service} using {model} for {channel}")
             response = client.chat.completions.create(**api_payload)

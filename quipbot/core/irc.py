@@ -365,7 +365,7 @@ class IRCBot:
         self.conversation_timers[channel.lower()] = time.time() + continue_freq
         self.logger.debug(f"Scheduled next response for {channel} in {continue_freq}s")
 
-    def send_channel_message(self, channel, message, add_to_history=False):
+    def send_channel_message(self, channel, message, add_to_history=True):
         """Send a message to a channel.
         
         Args:
@@ -373,6 +373,8 @@ class IRCBot:
             message: The message to send
             add_to_history: Whether to add this message to chat history (default: True)
         """
+        # First, normalize newlines and remove any double newlines
+        message = ' '.join(message.replace('\r', '').split('\n')).strip()
         formatted_message = self.format_message(message)
         
         # Calculate max message length (512 - overhead)
@@ -523,7 +525,7 @@ class IRCBot:
                     
                     # Skip if we were the last to speak
                     if self.was_last_speaker(channel_name):
-                        self.logger.debug(f"Skipping random actions in {channel_name} - bot was last speaker")
+                        self.logger.warning(f"Skipping random actions in {channel_name} - bot was last speaker")
                         continue
                     
                     # Check for idle chat
@@ -531,8 +533,18 @@ class IRCBot:
                     if idle_chat_interval > 0:
                         last_chat = self.last_chat_times.get(channel_lower, 0)
                         idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', idle_chat_interval)
+                        time_since_last_chat = now - last_chat
+                        time_until_next_chat = max(0, idle_chat_interval - (now - self.last_chat_times.get(channel_lower, 0)))
                         
-                        if (now - last_chat) >= idle_chat_time:
+                        self.logger.debug(
+                            f"Idle chat timing for {channel_name}: "
+                            f"interval={idle_chat_interval}s, "
+                            f"required_idle={idle_chat_time}s, "
+                            f"time_since_chat={time_since_last_chat:.0f}s, "
+                            f"time_until_next={time_until_next_chat:.0f}s"
+                        )
+                        
+                        if time_since_last_chat >= idle_chat_time and time_until_next_chat <= 0:
                             self._random_chat(channel_name)
                             self.last_chat_times[channel_lower] = now
                             
@@ -540,8 +552,17 @@ class IRCBot:
                     random_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
                     if random_action_interval > 0:
                         last_action = self.last_action_times.get(channel_lower, 0)
+                        time_since_last_action = now - last_action
+                        time_until_next_action = max(0, random_action_interval - time_since_last_action)
                         
-                        if (now - last_action) >= random_action_interval:
+                        self.logger.debug(
+                            f"Random action timing for {channel_name}: "
+                            f"interval={random_action_interval}s, "
+                            f"time_since_action={time_since_last_action:.0f}s, "
+                            f"time_until_next={time_until_next_action:.0f}s"
+                        )
+                        
+                        if time_until_next_action <= 0:
                             self._random_action(channel_name)
                             self.last_action_times[channel_lower] = now
                     
@@ -687,10 +708,10 @@ class IRCBot:
             )
             if message:
                 self.send_channel_message(channel_name, message)
-                self.logger.debug(f"Sent idle chat to {channel_name}")
+                self.logger.info(f"Sent idle chat to {channel_name}: {message}")
 
     def _random_action(self, target_channel=None):
-        """Perform a random action (topic change or kick)."""
+        """Perform a random action (topic change or kick) based on enabled actions in config."""
         import random
         if not self.channel_users:
             return
@@ -709,19 +730,38 @@ class IRCBot:
             if random_action_interval <= 0:
                 continue
 
+            # Check if channel has been idle long enough
+            channel_lower = channel_name.lower()
+            last_chat = self.last_chat_times.get(channel_lower, 0)
+            idle_chat_time = self.get_channel_config(channel_name, 'idle_chat_time', random_action_interval)
+            now = time.time()
+            
+            if (now - last_chat) < idle_chat_time:
+                self.logger.warning(f"Skipping random action in {channel_name} - channel not idle long enough ({now - last_chat:.0f}s < {idle_chat_time}s)")
+                continue
+
             # Check if bot is opped in the channel
             channel_users = self.channel_users.get(channel_name, {})
             bot_user = channel_users.get(self.current_nick, {})
             if not bot_user.get('op', False):
-                self.logger.debug(f"Skipping random action in {channel_name} - bot is not opped")
+                self.logger.warning(f"Skipping random action in {channel_name} - bot is not opped")
                 continue
 
-            action = random.choice(['topic', 'kick'])
+            # Get enabled random actions from config
+            random_actions = self.get_channel_config(channel_name, 'random_actions', {'kick': True, 'topic': True})
+            enabled_actions = [action for action, enabled in random_actions.items() if enabled]
+
+            if not enabled_actions:
+                self.logger.debug(f"No random actions enabled for {channel_name}")
+                continue
+
+            action = random.choice(enabled_actions)
+            self.logger.debug(f"Selected random action for {channel_name}: {action}")
 
             if action == 'topic':
                 # Use the channel-specific topic prompt
                 prompt = self.get_channel_config(channel_name, 'ai_prompt_topic', self.config['ai_prompt_topic'])
-                topic = self.ai_client.generate_topic(prompt, channel=channel_name)
+                topic = self.ai_client.generate_topic(channel_name)
                 if topic:
                     # Format the topic to remove encapsulating quotes
                     formatted_topic = self.format_message(topic)
@@ -776,11 +816,33 @@ class IRCBot:
         self.ai_client.default_prompt = new_config['ai_prompt_default']
         self.floodpro = FloodProtection(new_config)  # Reset flood protection with new config
         
-        # Reset action timers to trigger on next check
-        self.last_chat_times = {}
-        self.last_action_times = {}
-        self.last_check_times = {}
-        self.logger.debug("Reset action timers during config update")
+        # Reset action timers to trigger based on new intervals
+        now = time.time()
+        for channel in self.channels:
+            channel_name = channel['name']
+            channel_lower = channel_name.lower()
+            
+            # Reset idle chat timer if interval changed
+            old_idle_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
+            if old_idle_interval > 0:
+                last_chat = self.last_chat_times.get(channel_lower, now)
+                time_since_chat = now - last_chat
+                # Only reset if we're past the new interval
+                if time_since_chat >= old_idle_interval:
+                    self.last_chat_times[channel_lower] = now
+                    self.logger.debug(f"Reset idle chat timer for {channel_name} - was {time_since_chat:.0f}s since last chat")
+            
+            # Reset random action timer if interval changed
+            old_action_interval = self.get_channel_config(channel_name, 'random_action_interval', 0)
+            if old_action_interval > 0:
+                last_action = self.last_action_times.get(channel_lower, now)
+                time_since_action = now - last_action
+                # Only reset if we're past the new interval
+                if time_since_action >= old_action_interval:
+                    self.last_action_times[channel_lower] = now
+                    self.logger.debug(f"Reset random action timer for {channel_name} - was {time_since_action:.0f}s since last action")
+        
+        self.logger.debug("Updated configuration and reset action timers")
 
     def generate_idle_chat(self):
         """Generate and send an idle chat message."""

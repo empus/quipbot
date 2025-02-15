@@ -215,7 +215,7 @@ class MessageHandler:
                     # Format the entrance message to remove encapsulating quotes
                     formatted_entrance = self.bot.format_message(entrance_msg)
                     self.bot.send_channel_message(channel, formatted_entrance, add_to_history=True)  # Add to history
-                    self.logger.info(f"Sent entrance message to {channel}")
+                    self.logger.info(f"Sent entrance message to {channel}: {formatted_entrance}")
                 else:
                     self.logger.debug(f"Failed to generate entrance message for {channel}")
         else:
@@ -317,10 +317,10 @@ class MessageHandler:
                     if target in self.bot.channel_users[channel]:
                         if mode == 'o':
                             self.bot.channel_users[channel][target]['op'] = adding
-                            self.logger.debug(f"User {target} {'given' if adding else 'removed from'} op in {channel}")
+                            self.logger.info(f"User {target} {'given' if adding else 'removed from'} op in {channel}")
                         elif mode == 'v':
                             self.bot.channel_users[channel][target]['voice'] = adding
-                            self.logger.debug(f"User {target} {'given' if adding else 'removed from'} voice in {channel}")
+                            self.logger.info(f"User {target} {'given' if adding else 'removed from'} voice in {channel}")
                     param_index += 1
 
     def handle_353(self, nick, userhost, params):
@@ -568,11 +568,11 @@ class MessageHandler:
             if not self._check_command_permissions(nick, channel, cmd_config):
                 required = cmd_config.get('requires', 'any')
                 if required == 'admin':
-                    self.bot.send_channel_message(channel, "This command requires admin privileges.")
+                    self.bot.send_channel_message(channel, "This command requires admin privileges.", add_to_history=False)
                 elif required == 'op':
-                    self.bot.send_channel_message(channel, "This command requires channel operator privileges.")
+                    self.bot.send_channel_message(channel, "This command requires channel operator privileges.", add_to_history=False)
                 elif required == 'voice':
-                    self.bot.send_channel_message(channel, "This command requires voice privileges.")
+                    self.bot.send_channel_message(channel, "This command requires voice privileges.", add_to_history=False)
                 return
                     
             # Execute command
@@ -580,11 +580,11 @@ class MessageHandler:
             
             # Handle response
             if response:
-                self.bot.send_channel_message(channel, response)
+                self.bot.send_channel_message(channel, response, add_to_history=False)
                 
         except Exception as e:
             self.logger.error(f"Error executing command {command_name}: {e}")
-            self.bot.send_channel_message(channel, f"Error executing command: {e}")
+            self.bot.send_channel_message(channel, f"Error executing command: {e}", add_to_history=False)
             
     def _check_command_permissions(self, nick, channel, cmd_config):
         """Check if a user has permission to use a command.
