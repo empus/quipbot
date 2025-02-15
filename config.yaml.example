@@ -271,30 +271,43 @@ sleep_max: 60
 # Requires: admin, op, voice, or any
 commands:
   kick:
+    enabled: true
     requires: "op"     # Can be: admin, op, voice, or any
   boot:
+    enabled: true
     requires: "op"
   topic:
+    enabled: true
     requires: "op"
   sleep:
+    enabled: true
     requires: "op"
   wake:
+    enabled: true
     requires: "op"
   info:
+    enabled: true
     requires: "admin"
   say:
+    enabled: true
     requires: "admin"
   reload:
+    enabled: true
     requires: "admin"
   rehash:
+    enabled: true
     requires: "admin"
   die:
+    enabled: true
     requires: "admin"
   jump:
+    enabled: true
     requires: "admin"
   var:
+    enabled: true
     requires: "admin"
   config:
+    enabled: true
     requires: "admin"
   
 

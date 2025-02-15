@@ -270,4 +270,28 @@ class AIClient:
             
         except Exception as e:
             self.logger.error(f"API error generating kick reason for channel {channel}: {str(e)}", exc_info=True)
-            return "Because I said so!" 
+            return "Because I said so!"
+
+    def update_config(self, new_config):
+        """Update AI client configuration.
+        
+        Args:
+            new_config: New configuration dictionary
+        """
+        self.config = new_config
+        self.model = new_config['ai_model']
+        self.default_prompt = new_config['ai_prompt_default']
+        self.service = new_config.get('ai_service', 'openai')
+        self.api_key = new_config.get('ai_key', '')
+        
+        # Update history size limits per channel
+        for channel in new_config['channels']:
+            channel_name = channel['name'].lower()
+            if channel_name in self.chat_history:
+                history_size = channel.get('chat_history', 50)
+                # Trim history if new limit is smaller
+                if len(self.chat_history[channel_name]) > history_size:
+                    self.chat_history[channel_name] = self.chat_history[channel_name][-history_size:]
+                    self.logger.debug(f"Trimmed chat history for {channel_name} to {history_size} messages")
+        
+        self.logger.debug(f"Updated AI client config: model={self.model}, service={self.service}") 

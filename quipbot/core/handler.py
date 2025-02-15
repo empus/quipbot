@@ -555,6 +555,11 @@ class MessageHandler:
             # Get command configuration
             cmd_config = self.bot.get_channel_command_config(channel, command_name)
             
+            # Check if command is enabled first
+            if not cmd_config.get('enabled', True):
+                self.logger.warning(f"Command '{command_name}' is disabled in {channel}")
+                return
+            
             # Get user info including host and account
             user_info = self.bot.users.get(nick, {})
             ident = user_info.get('ident', '')
@@ -564,15 +569,10 @@ class MessageHandler:
             # Get channel-specific user info
             channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
             
-            # Check permissions once
+            # Check permissions
             if not self._check_command_permissions(nick, channel, cmd_config):
                 required = cmd_config.get('requires', 'any')
-                if required == 'admin':
-                    self.bot.send_channel_message(channel, "This command requires admin privileges.", add_to_history=False)
-                elif required == 'op':
-                    self.bot.send_channel_message(channel, "This command requires channel operator privileges.", add_to_history=False)
-                elif required == 'voice':
-                    self.bot.send_channel_message(channel, "This command requires voice privileges.", add_to_history=False)
+                self.logger.warning(f"User {nick} lacks required permission '{required}' for command '{command_name}' in {channel}")
                 return
                     
             # Execute command
@@ -606,9 +606,6 @@ class MessageHandler:
         # Get channel-specific user info
         channel_info = self.bot.channel_users.get(channel, {}).get(nick, {})
         
-        # Get required permission level
-        required = cmd_config.get('requires', 'any').lower()
-        
         # Construct userhost from ident and host
         ident = user_info.get('ident', '')
         host = user_info.get('host', '')
@@ -619,6 +616,9 @@ class MessageHandler:
             self.logger.debug(f"User {nick} ({userhost}) is admin - command permitted")
             return True
             
+        # Get required permission level
+        required = cmd_config.get('requires', 'any').lower()
+        
         # Handle different permission levels
         if required == 'admin':
             return False
@@ -631,6 +631,11 @@ class MessageHandler:
             if not (channel_info.get('voice', False) or channel_info.get('op', False)):
                 return False
                 
+        # Check if command is enabled for the channel
+        if not cmd_config.get('enabled', True):
+            self.logger.debug(f"Command is disabled in {channel}")
+            return False
+            
         # 'any' permission level always returns True
         return True
 

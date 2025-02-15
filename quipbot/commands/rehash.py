@@ -12,12 +12,12 @@ class RehashCommand(Command):
     def help(self):
         # Get prefix from channel if available, otherwise use global
         prefix = self.bot.get_channel_config(self.bot.channel if hasattr(self.bot, 'channel') else None, 'cmd_prefix', '!')
-        return f"Reload the bot configuration file only. Usage: {prefix}rehash"
+        return f"Reload the bot configuration file. Usage: {prefix}rehash"
 
     def execute(self, nick, channel, args):
         """Execute the rehash command."""
         try:
-            # Reload configuration
+            # Reload configuration from original config file
             with open(self.bot.config_file, 'r') as f:
                 new_config = yaml.safe_load(f)
                 

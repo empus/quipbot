@@ -810,12 +810,33 @@ class IRCBot:
 
     def update_config(self, new_config):
         """Update bot configuration and reset timers."""
+        # Store old config for comparison
+        old_config = self.config
+
+        # Update main config
         self.config = new_config
+        self.channels = new_config['channels']
+
+        # Update core bot settings
+        self.nick = new_config['nick']
+        self.altnick = new_config.get('altnick', f"{self.nick}_")
+        self.realname = new_config['realname']
+        self.ident = new_config['ident']
+        self.servers = new_config['servers']
+
+        # Update component configurations
         self.permissions.update_config(new_config)
-        self.ai_client.model = new_config['ai_model']
-        self.ai_client.default_prompt = new_config['ai_prompt_default']
-        self.floodpro = FloodProtection(new_config)  # Reset flood protection with new config
-        
+        self.ai_client.update_config(new_config)  # This will handle all AI-related settings
+        self.floodpro = FloodProtection(new_config)
+
+        # Update rate limiter settings if changed
+        if (old_config.get('irc_burst_size') != new_config.get('irc_burst_size') or
+            old_config.get('irc_fill_rate') != new_config.get('irc_fill_rate')):
+            burst_size = new_config.get('irc_burst_size', 4)
+            fill_rate = new_config.get('irc_fill_rate', 1.0)
+            self.rate_limiter = TokenBucket(capacity=burst_size, fill_rate=fill_rate)
+            self.logger.debug(f"Updated rate limiter: burst={burst_size}, rate={fill_rate}")
+
         # Reset action timers to trigger based on new intervals
         now = time.time()
         for channel in self.channels:
@@ -841,7 +862,14 @@ class IRCBot:
                 if time_since_action >= old_action_interval:
                     self.last_action_times[channel_lower] = now
                     self.logger.debug(f"Reset random action timer for {channel_name} - was {time_since_action:.0f}s since last action")
-        
+
+        # Update usermode if changed
+        if old_config.get('usermode') != new_config.get('usermode'):
+            usermode = new_config.get('usermode')
+            if usermode and self.registration_complete:
+                self.logger.info(f"Setting new user mode: {usermode}")
+                self.send_raw(f"MODE {self.current_nick} {usermode}")
+
         self.logger.debug("Updated configuration and reset action timers")
 
     def generate_idle_chat(self):
@@ -1120,11 +1148,20 @@ class IRCBot:
             (c for c in self.channels if c['name'].lower() == channel.lower()),
             None
         )
-        if channel_config and 'commands' in channel_config:
-            channel_cmd_config = channel_config['commands'].get(command, {})
-            # Merge with global config, channel config takes precedence
-            return {**global_cmd_config, **channel_cmd_config}
+        
+        # If the command is explicitly configured for this channel, use those settings
+        if channel_config and 'commands' in channel_config and command in channel_config['commands']:
+            channel_cmd_config = channel_config['commands'][command]
+            self.logger.debug(
+                f"Using channel-specific config for {command} in {channel}: "
+                f"channel={channel_cmd_config} (overriding global={global_cmd_config})"
+            )
+            return channel_cmd_config
             
+        # Otherwise use global config
+        self.logger.debug(
+            f"Using global config for {command} in {channel}: {global_cmd_config}"
+        )
         return global_cmd_config
 
     def is_protected_user(self, channel, nick, userhost=None):
