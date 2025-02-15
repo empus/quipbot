@@ -33,6 +33,14 @@ sasl:
 # Command prefix (e.g., !, ., @, $, etc)
 cmd_prefix: "@"
 
+# List of nicknames to ignore (don't add to history or reset idle timer)
+ignore_nicks:
+  - "X"
+  - "ChanServ"
+  - "NickServ"
+  - "HostServ"
+  - "MemoServ"
+
 ignore_regex:
   - "^!"          # Ignore messages starting with !
   - "^\\."        # Ignore messages starting with .

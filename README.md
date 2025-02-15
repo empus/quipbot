@@ -64,6 +64,8 @@ The bot supports the following commands:
 - Selective chat history context for different interaction types
 - Configurable random response delays to appear more natural
 - Sleep and wake commands to create quiet times
+- Avoids responding to its own messages
+- Tracks user activity for targeted interactions
 
 ### Channel Management
 - Auto-joins configured channels after server registration
@@ -73,6 +75,9 @@ The bot supports the following commands:
 - Supports channel-specific configurations
 - User and service bot ignoring capabilities
 - Smart message rate limiting
+- Joins channels only after proper registration
+- Handles channel keys and invites
+- Tracks user modes (op, voice)
 
 ### Automated Actions
 - Random idle chat when channels are inactive
@@ -80,13 +85,24 @@ The bot supports the following commands:
 - Funny kick messages with AI-generated reasons
 - Configurable intervals for automated actions per channel
 - Smart flood protection for both channels and private messages
+- All actions respect channel operator status
 
-### Message Formatting
+### Message Processing and Formatting
 - Supports markdown-style formatting in messages
   - Bold text using **asterisks**
   - Underlined text using _underscores_
 - Automatic quote removal for cleaner responses
 - Intelligent message splitting at sentence boundaries
+- Rate limiting with burst allowance
+- Ignored nick filtering
+- Context-aware responses
+
+### Error Handling and Protection
+- Automatic server reconnection
+- Fallback server support
+- Robust flood protection
+- Graceful error recovery
+- Detailed debug logging
 
 ### Flexible Configuration
 - YAML-based configuration file
@@ -115,14 +131,21 @@ Custom configuration can be loaded from the command line with the `-c` option.
 - `channels`: List of channels to join
 - `log_level`: Logging verbosity level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - `log_file`: Log file name
+- `log_raw`: Log raw IRC messages (true/false)
+- `log_api`: Log AI queries (true/false)
 - `pid_file`: Path to PID file when running as daemon
 
 
 ### Channel-Specific Settings
-Each channel can override global settings:
-- `idle_chat_interval`: Time between random chat messages (0 to disable)
-- `random_action_interval`: Time between random actions (0 to disable)
-- `idle_chat_time`: Idle time required to trigger chat or random actions (0 to disable)
+Each channel can optionally override global settings:
+
+- `ai_service`: AI service settings
+- `ai_key`: AI API key settings
+- `ai_model`: AI model settings
+- `ai_delay`: Response delay range
+- `ai_entrance`: Entrance settings
+- `ai_prompt_entrance`: Entrance prompt settings
+- `ai_prompt_default`: Default prompt settings
 - `ai_prompt_idle`: Custom prompt for idle chat
 - `ai_prompt_topic`: Custom prompt for topic generation
 - `ai_prompt_kick`: Custom prompt for kick reasons
@@ -132,18 +155,14 @@ Each channel can override global settings:
 - `ai_context_idle`: Whether to include chat history for idle chat
 - `ai_context_topic`: Whether to include chat history for topic generation
 - `ai_nicklist`: Whether to send the channel's nicklist to the AI for added context
-- `ignore_nicks`: Channel-specific nicks to ignore (in addition to global ignores)
-- `floodpro`: Channel-specific flood protection settings
-- `ai_delay`: Channel-specific response delay range
-- `chat_history`: Channel-specific chat history settings
-- `ai_service`: Channel-specific AI service settings
-- `ai_key`: Channel-specific AI API key settings
-- `ai_model`: Channel-specific AI model settings
-- `ai_entrance`: Channel-specific entrance settings
-- `ai_prompt_entrance`: Channel-specific entrance prompt settings
-- `ai_prompt_default`: Channel-specific default prompt settings
-
-
+- `chat_history`: Chat history settings
+- `ignore_nicks`: Nicks to ignore (in addition to global ignores)
+- `ignore_regex`: Lines to ignore by regex pattern
+- `floodpro`: Flood protection settings
+- `idle_chat_interval`: Time between random chat messages (0 to disable)
+- `random_action_interval`: Time between random actions (0 to disable)
+- `idle_chat_time`: Idle time required to trigger chat or random actions (0 to disable)
+  
 ## Features in Detail
 
 ### AI Response System
@@ -221,16 +240,33 @@ python3 -m quipbot
 Start the bot with the `-h` option to see the help message.
 ```bash
 ❯ python3 -m quipbot -h
-usage: quipbot [-h] [-n] [-c CONFIG]
+Usage: quipbot [-h] [-n] [-c CONFIG]
 
 QuipBot - An AI-powered IRC bot
 
-options:
+Options:
   -h, --help           show this help message and exit
   -n, --no-fork        Do not fork to background (run in foreground)
   -c, --config CONFIG  Path to config file (default: config.yaml)
-
 ```
+
+### Signals
+
+The bot supports the following signals:
+
+- `SIGHUP`: Rehash the configuration file.
+- `SIGUSR1`: Reload the config file and code modules.
+
+Rehash Example:
+```bash
+kill -SIGHUP $(pgrep -f quipbot)
+```
+
+Reload Example:
+```bash
+kill -USR1 $(pgrep -f quipbot)
+```
+
 
 ## Requirements
 
