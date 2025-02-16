@@ -137,7 +137,7 @@ Custom configuration can be loaded from the command line with the `-c` option.
 
 
 ### Channel-Specific Settings
-Each channel can optionally override global settings:
+The below can be set at a global level and overridden per channel:
 
 - `ai_service`: AI service settings
 - `ai_key`: AI API key settings
@@ -155,13 +155,15 @@ Each channel can optionally override global settings:
 - `ai_context_idle`: Whether to include chat history for idle chat
 - `ai_context_topic`: Whether to include chat history for topic generation
 - `ai_nicklist`: Whether to send the channel's nicklist to the AI for added context
-- `chat_history`: Chat history settings
+- `chat_history`: Lines to retain from chat history for AI context
 - `ignore_nicks`: Nicks to ignore (in addition to global ignores)
 - `ignore_regex`: Lines to ignore by regex pattern
 - `floodpro`: Flood protection settings
 - `idle_chat_interval`: Time between random chat messages (0 to disable)
-- `random_action_interval`: Time between random actions (0 to disable)
+- `random_action_interval`: Time between random actions
+- `random_actions`: Whether to enable random actions (kicks, topic changes)
 - `idle_chat_time`: Idle time required to trigger chat or random actions (0 to disable)
+- `commands`: Allowing individual commands to be toggled or have permissions changed per channel
   
 ## Features in Detail
 

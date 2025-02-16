@@ -522,12 +522,7 @@ class IRCBot:
                     # Skip if sleeping
                     if self.is_sleeping(channel_name):
                         continue
-                    
-                    # Skip if we were the last to speak
-                    if self.was_last_speaker(channel_name):
-                        self.logger.warning(f"Skipping random actions in {channel_name} - bot was last speaker")
-                        continue
-                    
+                                        
                     # Check for idle chat
                     idle_chat_interval = self.get_channel_config(channel_name, 'idle_chat_interval', 0)
                     if idle_chat_interval > 0:
@@ -563,6 +558,10 @@ class IRCBot:
                         )
                         
                         if time_until_next_action <= 0:
+                            # Skip if we were the last to speak
+                            if self.was_last_speaker(channel_name):
+                                self.logger.warning(f"Skipping random actions in {channel_name} - bot was last speaker")
+                                continue
                             self._random_action(channel_name)
                             self.last_action_times[channel_lower] = now
                     

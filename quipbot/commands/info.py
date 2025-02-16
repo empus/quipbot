@@ -48,7 +48,33 @@ class InfoCommand(Command):
                     interval_str = f"**{random_action_interval // 60}** mins"
                 else:
                     interval_str = f"**{random_action_interval}** secs"
-                behavior_parts.append(f"random actions every {interval_str}")
+                    
+                # Get global and channel random actions
+                global_actions = self.bot.config.get('random_actions', {})
+                channel_config = next(
+                    (c for c in self.bot.channels if c['name'].lower() == channel.lower()),
+                    None
+                )
+                channel_actions = channel_config.get('random_actions', {}) if channel_config else {}
+                
+                # Combine enabled actions from both global and channel settings
+                enabled_actions = []
+                for action in set(global_actions.keys()) | set(channel_actions.keys()):
+                    # Action is enabled if it's enabled in channel settings (if present) or global settings
+                    if channel_actions.get(action, global_actions.get(action, False)):
+                        enabled_actions.append(action)
+                
+                if enabled_actions:
+                    actions_str = ", ".join(f"**{action}**" for action in sorted(enabled_actions))
+                    # Get idle time requirement for random actions
+                    idle_time = self.bot.get_channel_config(channel, 'idle_chat_time', random_action_interval)
+                    if idle_time >= 60:
+                        idle_str = f" after **{idle_time // 60}** mins silence"
+                    else:
+                        idle_str = f" after **{idle_time}** secs silence"
+                    behavior_parts.append(f"random actions ({actions_str}) every {interval_str}{idle_str}")
+                else:
+                    behavior_parts.append("no random actions")
             
             if behavior_parts:
                 lines.append("🎭 **Behaviour**: " + " | ".join(behavior_parts))

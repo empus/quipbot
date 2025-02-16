@@ -219,7 +219,7 @@ class MessageHandler:
                 else:
                     self.logger.debug(f"Failed to generate entrance message for {channel}")
         else:
-            self.logger.debug(f"User {nick} joining {channel}")
+            self.logger.info(f"User {nick} joined {channel}")
             if channel in self.bot.channel_users:
                 self.bot.channel_users[channel][nick] = {
                     'op': False,
@@ -259,7 +259,7 @@ class MessageHandler:
         else:
             if channel in self.bot.channel_users and nick in self.bot.channel_users[channel]:
                 del self.bot.channel_users[channel][nick]
-                self.logger.debug(f"User {nick} left {channel}")
+                self.logger.info(f"User {nick} left {channel}")
 
     def handle_quit(self, nick, userhost, params):
         """Handle QUIT command."""
@@ -272,7 +272,7 @@ class MessageHandler:
         # Remove from global users list
         if nick in self.bot.users:
             del self.bot.users[nick]
-            self.logger.debug(f"User {nick} quit")
+            self.logger.info(f"User {nick} quit")
 
     def handle_nick(self, nick, userhost, params):
         """Handle NICK command."""
@@ -290,6 +290,8 @@ class MessageHandler:
             # Preserve all user data including new fields
             self.bot.users[new_nick] = self.bot.users.pop(nick)
             self.logger.debug(f"User {nick} changed nick to {new_nick} - Data: {self.bot.users[new_nick]}")
+
+        self.logger.info(f"User {nick} changed nick to {new_nick}")
 
     def handle_mode(self, nick, userhost, params):
         """Handle MODE command."""
